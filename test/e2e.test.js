@@ -7,6 +7,8 @@ delete process.env.GEMINI_API_KEY;
 
 const { createApp } = await import('../server/index.js');
 const { resetStoreForTests } = await import('../server/store/index.js');
+const { verifyMerchantAuthorization } = await import('../server/ap2/mandates.js');
+const { verifyJws, b64uJson } = await import('../server/ap2/jose.js');
 
 let server;
 let origin;
@@ -54,13 +56,72 @@ test('UCP-Agent header is required', async () => {
 });
 
 test('scenarios produce the expected guard outcomes', async () => {
-  const expected = { normal: 'approve', over_budget: 'decline', stale_quote: 'step_up', runaway_loop: 'decline', injected_catalog: 'decline', velocity: 'decline' };
+  const expected = { normal: 'approve', over_budget: 'decline', stale_quote: 'step_up', runaway_loop: 'decline', injected_catalog: 'decline', forged_mandate: 'decline', velocity: 'decline' };
   for (const [id, want] of Object.entries(expected)) {
     const started = await post('/api/runs', { scenario_id: id, mode: 'scripted' });
     const run = await waitRun(started.id);
     assert.equal(run.status, 'done', `${id}: ${run.error}`);
     assert.equal(run.final_outcome, want, `${id} -> ${run.final_outcome} (${JSON.stringify(run.outcomes)})`);
   }
+});
+
+test('AP2 findings are why each scenario ends the way it does', async () => {
+  const decisions = await fetch(`${origin}/api/decisions?limit=100`).then(json);
+  const byRequest = (text) => decisions.filter((d) => d.risk_signals?.user_request?.includes(text));
+  const codes = (d) => d.findings.map((f) => f.code);
+
+  const [normal] = byRequest('800k emails');
+  assert.equal(normal.ap2.status, 'verified');
+  assert.equal(normal.ap2.mode, 'human_not_present');
+  assert.equal(normal.ap2.approved.max_amount, 19900);
+
+  const [stale] = byRequest('quote I have on file');
+  assert.equal(stale.ap2.status, 'unresolved');
+  assert.ok(codes(stale).includes('ap2_amount_over_mandate'));
+
+  const [injected] = byRequest('Routing Pro');
+  assert.ok(codes(injected).includes('ap2_mandate_violated'), codes(injected).join());
+
+  const [forged] = byRequest('Starter email plan from Pelican Mail.');
+  assert.equal(forged.ap2.ucp_code, 'mandate_invalid_signature');
+  assert.ok(codes(forged).includes('ap2_mandate_invalid'));
+
+  const loop = byRequest('small vector pod');
+  assert.equal(loop.length, 2);
+  const second = loop.find((d) => d.outcome === 'decline');
+  assert.ok(codes(second).includes('ap2_mandate_violated'), 'reused open mandate is rejected');
+  assert.match(second.ap2.violations.map((v) => v.detail).join(' '), /already used/);
+});
+
+test('discovery advertises AP2, and checkouts are seller-signed', async () => {
+  const m = await fetch(`${origin}/sellers/pelican_mail/.well-known/ucp`).then(json);
+  assert.ok(m.ucp.capabilities.some((c) => c.name === 'dev.ucp.shopping.ap2_mandate' && c.extends === 'dev.ucp.shopping.checkout'));
+  assert.equal(m.signing_keys[0].crv, 'P-256');
+  assert.equal(m.signing_keys[0].d, undefined, 'no private key material');
+  const chk = await fetch(`${origin}/sellers/pelican_mail/checkout-sessions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'UCP-Agent': 'profile="https://platform.example/agents/manual-test"' },
+    body: JSON.stringify({ currency: 'USD', line_items: [{ item: { id: 'pm_starter_100k' }, quantity: 1 }], payment: {} }),
+  }).then(json);
+  assert.equal(chk.merchant.id, 'pelican_mail');
+  assert.equal(verifyMerchantAuthorization(chk, m.signing_keys).header.kid, m.signing_keys[0].kid);
+  assert.throws(() => verifyMerchantAuthorization({ ...chk, totals: [{ type: 'total', amount: 1 }] }, m.signing_keys));
+});
+
+test('a trusted platform that sends no mandate gets mandate_required', async () => {
+  const headers = { 'content-type': 'application/json', 'UCP-Agent': 'profile="https://platform.example/agents/procurement-bot"' };
+  const chk = await fetch(`${origin}/sellers/granite_vector/checkout-sessions`, {
+    method: 'POST', headers, body: JSON.stringify({ currency: 'USD', line_items: [{ item: { id: 'gv_backup' }, quantity: 1 }], payment: {} }),
+  }).then(json);
+  const done = await fetch(`${origin}/sellers/granite_vector/checkout-sessions/${chk.id}/complete`, {
+    method: 'POST', headers, body: JSON.stringify({ payment_data: { handler_id: 'mock_payment_handler', credential: { type: 'PAYMENT_GATEWAY', token: 'success_token' } } }),
+  }).then(json);
+  assert.equal(done.status, 'canceled');
+  assert.ok(done.messages.some((msg) => msg.code === 'mandate_required'));
+  assert.ok(done['x-guard'].findings.some((f) => f.code === 'ap2_mandate_missing'));
+  const receipt = b64uJson(done.ap2.checkout_receipt.split('.')[1]);
+  assert.equal(receipt.status, 'Error');
+  assert.equal(receipt.error, 'invalid_mandate');
 });
 
 test('step-up can be approved by a reviewer and the session completes', async () => {
@@ -74,6 +135,14 @@ test('step-up can be approved by a reviewer and the session completes', async ()
   assert.ok(session.continue_url);
   const reviewed = await post(`/api/decisions/${stepUp.id}/review`, { action: 'approve' });
   assert.equal(reviewed.review.action, 'approve');
+  // AP2 Human Present: the human's approval is a platform-signed closed
+  // mandate over this checkout, verified by the seller, with a receipt.
+  assert.equal(reviewed.review.ap2.mode, 'human_present');
+  assert.equal(reviewed.review.ap2.status, 'verified');
+  const m = await fetch(`${origin}/sellers/${stepUp.seller_id}/.well-known/ucp`).then(json);
+  const receipt = verifyJws(reviewed.review.ap2.receipt, (h) => m.signing_keys.find((k) => k.kid === h.kid)).payload;
+  assert.equal(receipt.status, 'Success');
+  assert.equal(receipt.reference, reviewed.review.ap2.reference);
   const after = await fetch(`${origin}/sellers/${stepUp.seller_id}/checkout-sessions/${stepUp.checkout_id}`).then(json);
   assert.equal(after.status, 'completed');
   assert.ok(after.order?.id);
@@ -98,7 +167,7 @@ test('voice step-up routes validate language, audio and review state', async () 
 });
 
 test('decisions carry explanations and latency', async () => {
-  const decisions = await fetch(`${origin}/api/decisions`).then(json);
+  const decisions = await fetch(`${origin}/api/decisions?limit=100`).then(json);
   assert.ok(decisions.length >= 6);
   for (const d of decisions) {
     assert.ok(d.explanation.length > 10);

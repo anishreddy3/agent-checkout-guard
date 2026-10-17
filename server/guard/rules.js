@@ -2,7 +2,7 @@
 // { code, severity: 'info' | 'warn' | 'block', weight, detail, data }.
 //
 // Inputs are plain objects so the rules can run without a store or network:
-//   ctx = { session, seller, policy, risk_signals, history }
+//   ctx = { session, seller, policy, risk_signals, history, ap2 }
 //   history = { recent_attempts: [events], today_completed_total: number,
 //               recent_completed_sessions: [sessions] }
 
@@ -217,7 +217,38 @@ export function paymentInstrument({ payment_data }) {
   return null;
 }
 
+// 8. AP2 mandates (when the platform negotiated AP2). ctx.ap2 is the result of
+//    verifying ap2.checkout_mandate and the payment mandate at Complete Checkout.
+//    A price above the ceiling the human signed is AP2's unresolved_constraint:
+//    the human can still approve directly, so it steps up instead of declining.
+export function ap2Mandate({ ap2, session }) {
+  if (!ap2 || ap2.status === 'verified') return null;
+  const detail = ap2.violations?.[0]?.detail ?? 'AP2 mandate could not be verified.';
+  if (ap2.status === 'unresolved') {
+    const over = ap2.violations.find((v) => v.max != null);
+    return {
+      code: 'ap2_amount_over_mandate',
+      severity: 'warn',
+      weight: 45,
+      detail: over
+        ? `Charge of ${money(over.amount, session.currency)} is above the ${money(over.max, session.currency)} the human approved in the AP2 mandate. The human must approve this one directly.`
+        : `${detail} The human must approve this one directly.`,
+      data: { ap2_error: ap2.ap2_error },
+    };
+  }
+  const code =
+    ap2.ucp_code === 'mandate_required'
+      ? 'ap2_mandate_missing'
+      : ap2.ucp_code === 'mandate_scope_mismatch' || ap2.ucp_code === 'merchant_authorization_invalid'
+        ? 'ap2_mandate_scope'
+        : ap2.ap2_error === 'invalid_mandate'
+          ? 'ap2_mandate_violated'
+          : 'ap2_mandate_invalid';
+  return { code, severity: 'block', weight: 100, detail, data: { ucp_code: ap2.ucp_code, ap2_error: ap2.ap2_error } };
+}
+
 export const RULES = [
+  ap2Mandate,
   quoteMismatch,
   spendPolicy,
   velocity,

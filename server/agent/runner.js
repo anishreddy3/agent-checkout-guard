@@ -10,13 +10,21 @@
 // request text and sent to the seller as risk_signals.intent. The Guard
 // therefore checks the cart against what the human asked for, not against
 // what the agent decided to do.
+//
+// AP2 (Human Not Present): before shopping, the human approves open mandates
+// on the platform's Trusted Surface (signed with the platform key, naming
+// this run's agent key). For each purchase the agent verifies the seller's
+// signature on the checkout, then signs closed mandates bound to it.
 
 import { randomUUID } from 'node:crypto';
 import { getStore } from '../store/index.js';
 import { generateJson, generateWithFallback, geminiStatus, GEMINI_MODEL } from '../gemini.js';
 import { UcpClient, mockCard } from './ucpClient.js';
 import { getScenario } from './scenarios.js';
-import { SELLERS } from '../sellers/catalog.js';
+import { SELLERS, getItem, unitPriceFor } from '../sellers/catalog.js';
+import { approveOpenMandates, closeMandates, checkoutJwtFrom, verifyMerchantAuthorization, merchantOf, newAgentKey } from '../ap2/mandates.js';
+import { platformKey } from '../ap2/keys.js';
+import { generateKey, b64uJson } from '../ap2/jose.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -89,10 +97,37 @@ function intentFor(sellerId, intent) {
   return { items: intent.items.filter((i) => i.seller_id === sellerId).map(({ item_id, quantity }) => ({ item_id, quantity })) };
 }
 
+// ---- AP2: the human's approval on the Trusted Surface ----------------------------
+
+// What the human approves for one seller: these items, at most this amount.
+function mandateTerms(sellerId, items, maxOverride) {
+  const lines = items.map((i) => ({ id: i.item_id, title: getItem(sellerId, i.item_id)?.title ?? i.item_id, quantity: i.quantity }));
+  const priced = lines.reduce((a, l) => {
+    const item = getItem(sellerId, l.id);
+    return a + (item ? unitPriceFor(item, l.quantity) * l.quantity : 0);
+  }, 0);
+  return { lines, maxAmount: maxOverride ?? priced };
+}
+
+// forged: the agent "approves" its own mandate with a key it made up, using
+// the platform's key id. The seller must reject it.
+async function approveMandate(trace, ctx, sellerId, items, maxOverride) {
+  const seller = SELLERS[sellerId];
+  const { lines, maxAmount } = mandateTerms(sellerId, items, maxOverride);
+  const signer = ctx.forged ? generateKey(platformKey().kid) : platformKey();
+  const open = approveOpenMandates({ platformJwk: signer, agentJwk: ctx.agentKey, merchant: merchantOf(seller), items: lines, maxAmount, currency: seller.currency });
+  await trace.push({
+    kind: 'mandate',
+    text: ctx.forged ? 'Agent signed its own approval (no human, wrong key)' : 'Human approved on the Trusted Surface',
+    result: { seller_id: sellerId, merchant: open.summary.merchant, items: lines.map((l) => `${l.quantity} x ${l.title}`), max_amount: maxAmount, currency: seller.currency, expires: new Date(open.summary.exp * 1000).toISOString(), forged: Boolean(ctx.forged) },
+  });
+  return open;
+}
+
 // ---- one purchase over UCP ---------------------------------------------------
 
-async function purchase(client, trace, { seller_id, items, expected_total }, intent, request) {
-  await client.discover(seller_id);
+async function purchase(client, trace, { seller_id, items, expected_total }, intent, request, ap2 = {}) {
+  const manifest = await client.discover(seller_id);
   await trace.push({ kind: 'tool', name: 'discover', args: { seller_id }, note: 'GET /.well-known/ucp' });
   const created = await client.createCheckout(seller_id, {
     currency: SELLERS[seller_id].currency,
@@ -107,8 +142,45 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
     args: { seller_id, items },
     result: { checkout_id: created.id, status: created.status, quoted_total: quoted },
   });
+  // AP2: check the seller signed this checkout, then sign closed mandates
+  // bound to it (aud = seller endpoint, nonce = checkout id).
+  let ap2Body;
+  let paymentData = mockCard();
+  if (ap2.agentKey) {
+    const open = ap2.mandateFor?.(seller_id);
+    try {
+      const { header } = verifyMerchantAuthorization(created, manifest.signing_keys ?? []);
+      if (!open) {
+        await trace.push({ kind: 'ap2', text: `Seller signature verified (${header.kid}). No approved mandate covers this seller, so none is sent.` });
+      } else {
+        const closed = closeMandates({
+          open,
+          agentJwk: ap2.agentKey,
+          checkoutJwt: checkoutJwtFrom(created),
+          aud: manifest.ucp.services['dev.ucp.shopping'].rest.endpoint,
+          nonce: created.id,
+          payee: created.merchant,
+          amount: quoted,
+          currency: created.currency,
+          instrument: { id: 'instr_demo_card', type: 'card', description: 'Demo card (test only)' },
+        });
+        ap2Body = { checkout_mandate: closed.checkoutMandate };
+        paymentData = { ...paymentData, token: closed.paymentMandate };
+        await trace.push({
+          kind: 'ap2',
+          text: `Seller signature on the checkout verified (${header.kid}). Agent signed closed Checkout and Payment Mandates for this checkout.`,
+          result: { checkout_hash: closed.checkoutHash, amount: quoted, chain: 'Trusted Surface (open) → agent key (closed)' },
+        });
+      }
+    } catch (err) {
+      await trace.push({ kind: 'error', name: 'ap2', text: `Seller signature did not verify: ${err.message}. Not paying.` });
+      throw err;
+    }
+  }
+
   const completed = await client.completeCheckout(seller_id, created.id, {
-    payment_data: mockCard(),
+    ...(ap2Body ? { ap2: ap2Body } : {}),
+    payment_data: paymentData,
     risk_signals: {
       expected_total: expected_total ?? quoted,
       intent: intentFor(seller_id, intent),
@@ -117,6 +189,10 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
     },
   });
   const guard = completed['x-guard'];
+  let receipt = null;
+  try {
+    receipt = completed.ap2?.checkout_receipt ? b64uJson(completed.ap2.checkout_receipt.split('.')[1]) : null;
+  } catch {}
   await trace.push({
     kind: 'guard',
     name: 'complete_checkout',
@@ -130,6 +206,8 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
       decision_id: guard?.id,
       order_id: completed.order?.id,
       continue_url: completed.continue_url,
+      ap2: guard?.ap2 ? { status: guard.ap2.status, mode: guard.ap2.mode, ucp_code: guard.ap2.ucp_code, max_amount: guard.ap2.approved?.max_amount ?? null } : null,
+      receipt: receipt ? { status: receipt.status, error: receipt.error ?? null } : null,
     },
   });
   return { checkout: completed, guard };
@@ -137,13 +215,20 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
 
 // ---- scripted agent --------------------------------------------------------
 
-async function runScripted({ scenario, client, trace, intent }) {
+async function runScripted({ scenario, client, trace, intent, ap2 }) {
   const results = [];
   const rounds = scenario.repeat ?? 1;
+  // One approval per planned purchase, for what the human asked for. A repeat
+  // round reuses the same approvals, which is exactly the runaway-loop bug.
+  const approvals = [];
+  for (const step of scenario.plan) {
+    const asked = step.items.map((i) => ({ item_id: i.item_id, quantity: scenario.intent_quantity ?? i.quantity }));
+    approvals.push(await approveMandate(trace, ap2, step.seller_id, asked, scenario.mandate_max));
+  }
   for (let r = 0; r < rounds; r++) {
-    for (const step of scenario.plan) {
+    for (const [i, step] of scenario.plan.entries()) {
       await trace.push({ kind: 'thought', text: `Buying ${step.items.map((i) => `${i.quantity} x ${i.item_id}`).join(', ')} from ${step.seller_id}.` });
-      results.push(await purchase(client, trace, step, intent, scenario.request));
+      results.push(await purchase(client, trace, step, intent, scenario.request, { ...ap2, mandateFor: () => approvals[i] }));
       await sleep(50);
     }
   }
@@ -191,8 +276,16 @@ const TOOLS = [
   },
 ];
 
-async function runGemini({ scenario, client, trace, intent, onModel }) {
+async function runGemini({ scenario, client, trace, intent, onModel, ap2 }) {
   const results = [];
+  // The human approves one mandate per seller they asked to buy from, for the
+  // items and quantities they asked for.
+  const approvals = {};
+  const bySeller = {};
+  for (const it of intent.items) (bySeller[it.seller_id] ??= []).push({ item_id: it.item_id, quantity: it.quantity });
+  for (const [sellerId, items] of Object.entries(bySeller)) {
+    if (SELLERS[sellerId]) approvals[sellerId] = await approveMandate(trace, ap2, sellerId, items, Object.keys(bySeller).length === 1 ? scenario.mandate_max : undefined);
+  }
   // Gemini 3 ties function-call history to the model that produced it, so the
   // first call picks the model (primary, else fallback) and the run keeps it.
   let pinned = null;
@@ -243,7 +336,7 @@ async function runGemini({ scenario, client, trace, intent, onModel }) {
             await trace.push({ kind: 'tool', name: 'get_catalog', args: call.args, result: { items: out.items.length } });
           } else if (call.name === 'buy') {
             const step = { seller_id: call.args.seller_id, items: call.args.items, expected_total: call.args.expected_total };
-            const pr = await purchase(client, trace, step, intent, scenario.request);
+            const pr = await purchase(client, trace, step, intent, scenario.request, { ...ap2, mandateFor: (id) => approvals[id] });
             results.push(pr);
             out = {
               status: pr.checkout.status,
@@ -299,10 +392,11 @@ export async function startRun({ scenarioId, origin, mode }) {
     try {
       const client = new UcpClient({ origin, agentProfile: scenario.agent_profile });
       const intent = await extractIntent(scenario.request, scenario);
+      const ap2 = { agentKey: newAgentKey(run.id), forged: scenario.ap2 === 'forged' };
       await trace.push({ kind: 'intent', text: 'User intent extracted for the Guard', result: intent });
       const results = useGemini
-        ? await runGemini({ scenario, client, trace, intent, onModel: (m) => { run.model = m; } })
-        : await runScripted({ scenario, client, trace, intent });
+        ? await runGemini({ scenario, client, trace, intent, onModel: (m) => { run.model = m; }, ap2 })
+        : await runScripted({ scenario, client, trace, intent, ap2 });
       run.outcomes = results.map((r) => r.guard?.outcome ?? r.checkout.status);
       run.final_outcome = run.outcomes[run.outcomes.length - 1] ?? null;
       run.matched_expectation = run.final_outcome === scenario.expected_outcome;

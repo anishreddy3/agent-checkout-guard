@@ -6,6 +6,8 @@ import { getStore } from '../store/index.js';
 import { policyFor } from './policy.js';
 import { runRules, scoreFindings, totalOf, money } from './rules.js';
 import { generateText } from '../gemini.js';
+import { approveClosedCheckout, checkoutJwtFrom, verifyAtComplete, checkoutReceipt } from '../ap2/mandates.js';
+import { platformKey, platformKeyById, sellerKey } from '../ap2/keys.js';
 
 function minutesAgo(min) {
   return new Date(Date.now() - min * 60 * 1000).toISOString();
@@ -76,11 +78,11 @@ async function explain(outcome, findings, session, seller, risk_score) {
   return { text: text || fallback, source: text ? 'gemini' : 'rules' };
 }
 
-export async function evaluate({ session, seller, risk_signals = {}, payment_data = {} }) {
+export async function evaluate({ session, seller, risk_signals = {}, payment_data = {}, ap2 = null }) {
   const started = Date.now();
   const policy = await policyFor(session.agent_profile);
   const history = await loadHistory(session.agent_profile, policy, session.id);
-  const findings = runRules({ session, seller, policy, risk_signals, payment_data, history });
+  const findings = runRules({ session, seller, policy, risk_signals, payment_data, history, ap2 });
   const { risk_score, outcome } = scoreFindings(findings, policy);
   const decided = Date.now();
   const explanation = await explain(outcome, findings, session, seller, risk_score);
@@ -101,6 +103,18 @@ export async function evaluate({ session, seller, risk_signals = {}, payment_dat
     currency: session.currency,
     cart: session.line_items.map((li) => ({ item_id: li.item.id, title: li.item.title, quantity: li.quantity })),
     risk_signals,
+    ap2: ap2 && {
+      status: ap2.status,
+      mode: ap2.mode ?? null,
+      ucp_code: ap2.ucp_code ?? null,
+      ap2_error: ap2.ap2_error ?? null,
+      approved: ap2.approved ?? null,
+      violations: (ap2.violations ?? []).slice(0, 3).map(({ code, detail }) => ({ code, detail })),
+      technical: ap2.technical ?? null,
+      verify_ms: ap2.verify_ms ?? null,
+      checkout_hash: ap2.checkout_hash ?? null,
+      reference: ap2.reference ?? null,
+    },
     // decision_ms: history + rules, the risk decision itself.
     // explain_ms: the Gemini explanation written after the decision.
     decision_ms: decided - started,
@@ -117,6 +131,27 @@ export async function evaluate({ session, seller, risk_signals = {}, payment_dat
   return decision;
 }
 
+// AP2 Human Present: the human approves this exact checkout on the Trusted
+// Surface (the dashboard, by click or by voice). The platform signs a closed
+// Checkout Mandate over the seller-signed checkout; the seller verifies it
+// before completing, and issues a Checkout Receipt.
+async function humanPresentMandate(session, orderId) {
+  const { signedView } = await import('../ucp/checkout.js');
+  const checkoutJwt = checkoutJwtFrom(signedView(session));
+  const mandate = approveClosedCheckout({ platformJwk: platformKey(), checkoutJwt });
+  const result = await verifyAtComplete({
+    session,
+    sellerJwk: sellerKey(session.seller_id),
+    checkoutMandate: mandate,
+    rootKeyFor: (h) => platformKeyById(h.kid),
+  });
+  const receipt =
+    result.status === 'verified'
+      ? checkoutReceipt({ sellerJwk: sellerKey(session.seller_id), iss: `sellers/${session.seller_id}`, reference: result.reference, status: 'Success', order_id: orderId })
+      : null;
+  return { mode: 'human_present', status: result.status, checkout_hash: result.checkout_hash ?? null, reference: result.reference ?? null, receipt, error: result.violations?.[0]?.detail ?? null };
+}
+
 // Human review of a step-up: approve or reject from the dashboard.
 export async function resolveReview(decisionId, action, reviewer = 'dashboard', evidence = undefined) {
   const store = getStore();
@@ -125,8 +160,15 @@ export async function resolveReview(decisionId, action, reviewer = 'dashboard', 
   const session = await store.get('sessions', decision.checkout_id);
   if (!session) return null;
   let next;
-  if (action === 'approve') {
+  let ap2 = null;
+  if (action === 'approve' && session.ap2_state) {
     const orderId = `ord_${randomUUID().slice(0, 10)}`;
+    ap2 = await humanPresentMandate(session, orderId);
+    if (ap2.status !== 'verified') throw new Error(`AP2 human-present mandate did not verify: ${ap2.error}`);
+    ap2.order_id = orderId;
+  }
+  if (action === 'approve') {
+    const orderId = ap2?.order_id ?? `ord_${randomUUID().slice(0, 10)}`;
     next = {
       ...session,
       status: 'completed',
@@ -143,7 +185,10 @@ export async function resolveReview(decisionId, action, reviewer = 'dashboard', 
     };
   }
   await store.set('sessions', session.id, next);
-  const updated = { ...decision, review: { action, reviewer, at: new Date().toISOString(), ...(evidence ? { evidence } : {}) } };
+  const updated = {
+    ...decision,
+    review: { action, reviewer, at: new Date().toISOString(), ...(evidence ? { evidence } : {}), ...(ap2 ? { ap2 } : {}) },
+  };
   await store.set('decisions', decisionId, updated);
   await store.add('events', {
     type: 'review.resolved',

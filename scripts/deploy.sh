@@ -47,6 +47,13 @@ if gcloud secrets describe sarvam-api-key >/dev/null 2>&1; then
   echo "==> Using sarvam-api-key from Secret Manager"
   SECRETS="${SECRETS:+$SECRETS,}SARVAM_API_KEY=sarvam-api-key:latest"
 fi
+# AP2 signing keys (platform Trusted Surface + sellers). Every instance must
+# sign and verify with the same keys, so they live in Secret Manager.
+if ! gcloud secrets describe ap2-keys >/dev/null 2>&1; then
+  echo "==> Generating AP2 signing keys into Secret Manager (ap2-keys)"
+  node scripts/gen-ap2-keys.js | gcloud secrets create ap2-keys --data-file=-
+fi
+SECRETS="${SECRETS:+$SECRETS,}AP2_KEYS=ap2-keys:latest"
 SECRET_FLAG=()
 if [[ -n "$SECRETS" ]]; then SECRET_FLAG=(--set-secrets "$SECRETS"); fi
 if [[ -n "${ADMIN_TOKEN:-}" ]]; then ENV_VARS="$ENV_VARS,ADMIN_TOKEN=$ADMIN_TOKEN"; fi

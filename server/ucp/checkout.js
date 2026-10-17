@@ -3,6 +3,13 @@
 // Checkout { ucp, id, line_items, buyer, status, currency, totals, messages,
 // links, expires_at, continue_url, payment, order }.
 //
+// AP2 (dev.ucp.shopping.ap2_mandate): every checkout response carries
+// ap2.merchant_authorization, the seller's detached signature over the
+// checkout. When AP2 is negotiated, Complete Checkout must carry
+// ap2.checkout_mandate (and the payment mandate in payment_data.token); both
+// are verified before the Guard decides, and the response carries a signed
+// AP2 Checkout Receipt.
+//
 // The Guard runs inside completeCheckout. Its decision maps onto UCP states:
 //   approve  -> completed (order populated)
 //   step_up  -> requires_escalation (continue_url for a human to confirm)
@@ -12,6 +19,9 @@ import { randomUUID } from 'node:crypto';
 import { getSeller, getItem, unitPriceFor } from '../sellers/catalog.js';
 import { getStore } from '../store/index.js';
 import { evaluate } from '../guard/index.js';
+import { merchantOf, signCheckout, verifyAtComplete, checkoutReceipt } from '../ap2/mandates.js';
+import { sellerKey, platformKeyById, trustedPlatformFor } from '../ap2/keys.js';
+import { publicJwk, sha256b64u } from '../ap2/jose.js';
 
 export const UCP_VERSION = '2026-01-11';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -52,8 +62,17 @@ export function manifest(seller, origin) {
           spec: `https://ucp.dev/${UCP_VERSION}/specification/checkout/`,
           schema: `https://ucp.dev/${UCP_VERSION}/schemas/shopping/checkout.json`,
         },
+        {
+          name: 'dev.ucp.shopping.ap2_mandate',
+          version: UCP_VERSION,
+          spec: `https://ucp.dev/${UCP_VERSION}/specification/ap2-mandates/`,
+          extends: 'dev.ucp.shopping.checkout',
+          config: { vp_formats_supported: { 'dc+sd-jwt': {} } },
+        },
       ],
     },
+    // Keys this seller signs checkouts and receipts with (kid lookup).
+    signing_keys: [publicJwk(sellerKey(seller.id))],
     payment: {
       handlers: [
         {
@@ -142,8 +161,14 @@ function links(origin, seller) {
 
 function publicView(session) {
   // Strip internal fields before returning to the platform.
-  const { seller_id, agent_profile, quote_history, guard, ...rest } = session;
+  const { seller_id, agent_profile, quote_history, guard, ap2_state, ...rest } = session;
   return rest;
+}
+
+// What the platform receives: the checkout plus the seller's signature over it.
+export function signedView(session) {
+  const body = publicView(session);
+  return { ...body, ap2: { merchant_authorization: signCheckout(body, sellerKey(session.seller_id)) } };
 }
 
 async function logEvent(type, session, extra = {}) {
@@ -176,6 +201,7 @@ export async function createCheckout(req, sellerId, body) {
     ucp: { version: UCP_VERSION },
     id: `chk_${randomUUID().slice(0, 12)}`,
     seller_id: seller.id,
+    merchant: merchantOf(seller),
     agent_profile: agent,
     line_items,
     buyer: body.buyer ?? null,
@@ -195,13 +221,13 @@ export async function createCheckout(req, sellerId, body) {
   };
   await getStore().set('sessions', session.id, session);
   await logEvent('checkout.created', session);
-  return publicView(session);
+  return signedView(session);
 }
 
 export async function getCheckout(sellerId, id) {
   const s = await getStore().get('sessions', id);
   if (!s || s.seller_id !== sellerId) throw new UcpError(404, 'not_found', 'Checkout not found');
-  return publicView(s);
+  return signedView(s);
 }
 
 export async function updateCheckout(req, sellerId, id, body) {
@@ -229,17 +255,17 @@ export async function updateCheckout(req, sellerId, id, body) {
   };
   await getStore().set('sessions', id, updated);
   await logEvent('checkout.updated', updated);
-  return publicView(updated);
+  return signedView(updated);
 }
 
 export async function cancelCheckout(sellerId, id, reason = 'canceled_by_platform') {
   const s = await getStore().get('sessions', id);
   if (!s || s.seller_id !== sellerId) throw new UcpError(404, 'not_found', 'Checkout not found');
-  if (['completed', 'canceled'].includes(s.status)) return publicView(s);
+  if (['completed', 'canceled'].includes(s.status)) return signedView(s);
   const updated = { ...s, status: 'canceled', messages: [...(s.messages ?? []), infoMessage(reason)] };
   await getStore().set('sessions', id, updated);
   await logEvent('checkout.canceled', updated, { reason });
-  return publicView(updated);
+  return signedView(updated);
 }
 
 function infoMessage(code, content = code) {
@@ -250,18 +276,40 @@ export async function completeCheckout(req, sellerId, id, body) {
   const seller = getSeller(sellerId);
   const s = await getStore().get('sessions', id);
   if (!seller || !s || s.seller_id !== sellerId) throw new UcpError(404, 'not_found', 'Checkout not found');
-  if (s.status === 'completed') return publicView(s);
+  if (s.status === 'completed') return signedView(s);
   if (s.status === 'canceled') throw new UcpError(409, 'canceled', 'Checkout was canceled');
   if (!body.payment_data) throw new UcpError(400, 'missing_payment_data', 'payment_data is required');
   if (new Date(s.expires_at).getTime() < Date.now()) {
     const expired = { ...s, status: 'canceled', messages: [infoMessage('expired', 'Session expired')] };
     await getStore().set('sessions', id, expired);
-    return publicView(expired);
+    return signedView(expired);
   }
 
   const origin = baseUrl(req);
   const inProgress = { ...s, status: 'complete_in_progress' };
   await getStore().set('sessions', id, inProgress);
+
+  // AP2. Negotiated when the platform is a trusted Agent Provider (or sends
+  // mandates anyway). Mandates are bound to this seller's endpoint (aud) and
+  // to this checkout (nonce).
+  const aud = `${origin}/sellers/${seller.id}`;
+  const trusted = trustedPlatformFor(s.agent_profile);
+  let ap2 = null;
+  if (trusted || body.ap2) {
+    const started = Date.now();
+    ap2 = await verifyAtComplete({
+      session: s,
+      sellerJwk: sellerKey(seller.id),
+      checkoutMandate: body.ap2?.checkout_mandate,
+      paymentMandate: body.payment_data?.token,
+      rootKeyFor: (h) => (trusted ? platformKeyById(h.kid) : null),
+      aud,
+      nonce: s.id,
+      isReused: async (hash) =>
+        (await getStore().query('events', [['open_checkout_hash', '==', hash]], { limit: 20 })).some((e) => e.type === 'ap2.mandate_used'),
+    });
+    ap2.verify_ms = Date.now() - started;
+  }
 
   // The Guard. risk_signals is the UCP-defined slot for exactly this input.
   const decision = await evaluate({
@@ -269,6 +317,7 @@ export async function completeCheckout(req, sellerId, id, body) {
     seller,
     risk_signals: body.risk_signals ?? {},
     payment_data: body.payment_data,
+    ap2,
   });
 
   let next;
@@ -315,11 +364,35 @@ export async function completeCheckout(req, sellerId, id, body) {
     };
   }
   next.guard = { decision_id: decision.id, outcome: decision.outcome, risk_score: decision.risk_score };
+  let receipt = null;
+  if (ap2) {
+    if (ap2.status === 'failed') {
+      next.messages = [...next.messages, { type: 'error', code: ap2.ucp_code, content: ap2.violations?.[0]?.detail ?? 'AP2 mandate rejected', severity: 'requires_buyer_input' }];
+    }
+    next.ap2_state = { status: ap2.status, mode: ap2.mode ?? null, open_checkout_hash: ap2.open_checkout_hash ?? null };
+    const completedNow = next.status === 'completed';
+    // AP2 Checkout Receipt. Failures caused by the mandate carry the AP2 error;
+    // Guard decisions on a valid mandate carry this service's own codes.
+    receipt = checkoutReceipt({
+      sellerJwk: sellerKey(seller.id),
+      iss: aud,
+      reference: ap2.reference ?? sha256b64u(body.ap2?.checkout_mandate ?? ''),
+      status: completedNow ? 'Success' : 'Error',
+      order_id: next.order?.id,
+      error: ap2.ap2_error ?? (decision.outcome === 'step_up' ? 'risk_step_up' : 'risk_declined'),
+      error_description: completedNow ? undefined : decision.explanation,
+    });
+    if (completedNow && ap2.open_checkout_hash) {
+      await getStore().add('events', { type: 'ap2.mandate_used', at: new Date().toISOString(), open_checkout_hash: ap2.open_checkout_hash, checkout_id: id, agent_profile: s.agent_profile });
+    }
+  }
   await getStore().set('sessions', id, next);
   await logEvent('checkout.complete_attempt', next, {
     outcome: decision.outcome,
     risk_score: decision.risk_score,
     decision_id: decision.id,
   });
-  return { ...publicView(next), 'x-guard': decision };
+  const out = signedView(next);
+  if (receipt) out.ap2.checkout_receipt = receipt;
+  return { ...out, 'x-guard': decision };
 }

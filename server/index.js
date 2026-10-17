@@ -19,6 +19,7 @@ import { startRun } from './agent/runner.js';
 import { SCENARIOS } from './agent/scenarios.js';
 import { geminiStatus } from './gemini.js';
 import { voiceStatus, speak, writePrompt, hear, voiceOutcome, VOICE_LANGUAGES } from './voice.js';
+import { keySource, publicKeys } from './ap2/keys.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', 'web');
@@ -48,6 +49,7 @@ export function createApp() {
         store: getStore().kind,
         gemini: geminiStatus(),
         voice: voiceStatus(),
+        ap2: { version: '0.2', ucp_extension: 'dev.ucp.shopping.ap2_mandate', keys: keySource() },
         ucp_version: '2026-01-11',
         sellers: listSellers().map((s) => s.id),
       });
@@ -56,6 +58,8 @@ export function createApp() {
 
   // ---- sellers: UCP discovery, catalog, checkout REST binding --------------
   app.get('/api/sellers', (req, res) => res.json(listSellers()));
+  // Public verification keys: the platform Trusted Surface and each seller.
+  app.get('/api/ap2/keys', (req, res) => res.json(publicKeys()));
 
   app.get('/sellers/:sellerId/.well-known/ucp', (req, res) => {
     const seller = getSeller(req.params.sellerId);

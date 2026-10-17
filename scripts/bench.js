@@ -30,7 +30,8 @@ for (let round = 0; round < ROUNDS; round++) {
 }
 const decisions = await fetch(`${BASE}/api/decisions?limit=500`).then(json);
 const pct = (field) => {
-  const v = decisions.map((d) => d[field]).filter((x) => typeof x === 'number').sort((a, b) => a - b);
+  const get = (d) => field.split('.').reduce((o, k) => o?.[k], d);
+  const v = decisions.map(get).filter((x) => typeof x === 'number').sort((a, b) => a - b);
   const at = (q) => v[Math.min(v.length - 1, Math.floor(v.length * q))];
   return v.length ? `p50 ${at(0.5)} ms, p95 ${at(0.95)} ms, max ${v[v.length - 1]} ms` : 'n/a';
 };
@@ -41,6 +42,7 @@ console.table(rows.map(({ round, scenario, expected, got, ok, ms, calls }) => ({
 const acc = rows.filter((r) => r.ok).length / rows.length;
 console.log(`Outcome accuracy: ${rows.filter((r) => r.ok).length}/${rows.length} (${(acc * 100).toFixed(0)}%)`);
 console.log(`Guard decisions stored: ${decisions.length}`);
+console.log(`  AP2 mandate verification:        ${pct('ap2.verify_ms')}`);
 console.log(`  risk decision (history + rules): ${pct('decision_ms')}`);
 console.log(`  Gemini explanation:              ${pct('explain_ms')}`);
 console.log(`  total inside Complete Checkout:  ${pct('latency_ms')}`);

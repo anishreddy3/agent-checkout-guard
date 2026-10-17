@@ -38,6 +38,11 @@ const FINDING = {
   unverified_seller: 'Unverified seller',
   category_not_allowed: 'Category not allowed',
   missing_payment_credential: 'No payment credential',
+  ap2_amount_over_mandate: 'Above the amount the human signed',
+  ap2_mandate_missing: 'No AP2 mandate',
+  ap2_mandate_invalid: 'AP2 signature invalid',
+  ap2_mandate_scope: 'Mandate for a different checkout',
+  ap2_mandate_violated: 'Outside the AP2 mandate',
 };
 const findingChip = (f) => {
   const code = typeof f === 'string' ? f : f.code;
@@ -50,8 +55,17 @@ const sellerShort = (name) => String(name || '').replace(' (example seller)', ''
 const reviewLabel = (rv) => {
   const verb = rv.action === 'approve' ? 'Approved' : 'Rejected';
   const lang = rv.evidence?.channel === 'voice' ? status?.voice?.languages?.find((l) => l.code === rv.evidence.language)?.name : null;
-  return lang ? `${verb} by voice, in ${lang}` : `${verb} by a reviewer`;
+  const how = lang ? `${verb} by voice, in ${lang}` : `${verb} by a reviewer`;
+  return rv.ap2?.status === 'verified' ? `${how}, with a signed AP2 mandate` : how;
 };
+// One line on what AP2 established for a decision.
+function ap2Line(a, currency = 'USD') {
+  if (!a) return '';
+  const max = a.approved?.max_amount != null ? fmt(a.approved.max_amount, a.approved.currency ?? currency) : null;
+  if (a.status === 'verified') return `<p class="ap2 ok">${icon('shield')}<span><b>AP2 mandate verified</b>: the human's signed approval, bound to this checkout${max ? `, up to ${max}` : ''}.</span></p>`;
+  if (a.status === 'unresolved') return `<p class="ap2 warn">${icon('alert')}<span><b>AP2: above the approved ${max ?? 'amount'}.</b> Signatures are valid; the human must approve this charge directly.</span></p>`;
+  return `<p class="ap2 bad">${icon('x')}<span><b>AP2 rejected</b> <code translate="no">${esc(a.ucp_code ?? a.ap2_error ?? '')}</code>: ${esc(a.violations?.[0]?.detail ?? '')}</span></p>`;
+}
 const voiceReady = () => Boolean(status?.gemini?.configured && status?.voice);
 const voiceButton = (id) =>
   voiceReady() ? `<button type="button" class="btn voice-btn" data-voice="${esc(id)}">${icon('mic')}Confirm by voice</button>` : '';
@@ -181,6 +195,7 @@ function verdictCard(r, { full }) {
     </div>
     <p class="exp">${esc(r.explanation)}</p>
     ${d?.explanation_source === 'gemini' ? `<span class="by">${icon('spark')}Explanation written by Gemini</span>` : ''}
+    ${ap2Line(d?.ap2 ?? r.ap2, d?.currency)}
     ${findings.length ? `<div class="findings">${findings.map(findingChip).join('')}</div>` : ''}
     ${actions}
   </div>`;
@@ -192,6 +207,16 @@ function stepHtml(st, i, lastGuard) {
     return { cls: 'intent', ic: 'user', k: 'Human intent', body: `<div class="txt">${esc(items)}</div><div class="io">read from the request by ${st.result.source === 'gemini' ? 'Gemini' : 'the scenario'}, sent to the Guard as risk_signals.intent</div>` };
   }
   if (st.kind === 'thought') return { cls: 'agent', ic: 'bot', k: 'Agent', body: `<div class="txt">${esc(st.text)}</div>` };
+  if (st.kind === 'mandate') {
+    const m = st.result;
+    return {
+      cls: m.forged ? 'error' : 'mandate',
+      ic: m.forged ? 'alert' : 'user',
+      k: m.forged ? 'AP2 approval (forged)' : 'AP2 approval',
+      body: `<div class="txt">${esc(st.text)}: ${esc(m.items.join(', '))} from ${esc(m.merchant)}, up to ${fmt(m.max_amount, m.currency)}</div><div class="io">open Checkout + Payment Mandates (SD-JWT), agent key in cnf, expires ${new Date(m.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>`,
+    };
+  }
+  if (st.kind === 'ap2') return { cls: 'mandate', ic: 'shield', k: 'AP2', body: `<div class="txt">${esc(st.text)}</div>${st.result?.checkout_hash ? `<div class="io">checkout_hash ${esc(st.result.checkout_hash.slice(0, 16))}… · ${esc(st.result.chain)}</div>` : ''}` };
   if (st.kind === 'tool') {
     const res = st.result ? `<div class="io">→ ${esc(JSON.stringify(st.result))}</div>` : st.note ? `<div class="io">${esc(st.note)}</div>` : '';
     return { cls: 'ucp', ic: 'store', k: `UCP ${st.name.replace(/_/g, ' ')}`, body: `${st.args ? `<div class="io">${esc(JSON.stringify(st.args))}</div>` : ''}${res}` };
@@ -199,7 +224,7 @@ function stepHtml(st, i, lastGuard) {
   if (st.kind === 'guard') {
     const r = st.result;
     if (i === lastGuard) return { cls: 'guard', ic: 'shield', k: 'Guard decision', body: verdictCard(r, { full: true }), verdict: true };
-    return { cls: 'guard', ic: 'shield', k: 'Guard', body: `<div class="txt">${chip(r.outcome, 'sm')} risk ${r.risk_score}/100 · ${esc(r.explanation)}</div>` };
+    return { cls: 'guard', ic: 'shield', k: 'Guard', body: `<div class="txt">${chip(r.outcome, 'sm')} risk ${r.risk_score}/100 · ${esc(r.explanation)}</div>${r.ap2 ? `<div class="io">AP2 ${esc(r.ap2.status)}${r.ap2.ucp_code ? ` (${esc(r.ap2.ucp_code)})` : ''}${r.receipt ? ` · receipt ${esc(r.receipt.status)}` : ''}</div>` : ''}` };
   }
   if (st.kind === 'final') return { cls: 'agent', ic: 'bot', k: 'Agent report', body: `<div class="txt">${esc(st.text)}</div>` };
   if (st.kind === 'error') return { cls: 'error', ic: 'alert', k: `Error in ${esc(st.name)}`, body: `<div class="txt">${esc(st.text)}</div>` };
@@ -516,7 +541,7 @@ function renderDecisions() {
       <td class="sc"><div class="sname">${esc(sellerShort(d.seller_name))}</div><div class="cart">${cart}</div></td>
       <td class="num">${fmt(d.total, d.currency)}</td>
       <td class="rk"><div class="risk-cell"><div class="meter"><span class="fill ${esc(d.outcome)}" style="transform:scaleX(${Math.min(100, d.risk_score) / 100})"></span></div><span>${d.risk_score}</span></div></td>
-      <td class="oc">${chip(d.outcome, 'sm')}${rv}</td>
+      <td class="oc">${chip(d.outcome, 'sm')}${rv}${d.ap2 ? `<span class="rv ap2-tag ${d.ap2.status}">AP2 ${d.ap2.status === 'verified' ? 'verified' : d.ap2.status === 'unresolved' ? 'over limit' : 'rejected'}</span>` : ''}</td>
       <td class="why">${esc(d.explanation)}${d.findings.length ? `<div class="findings">${d.findings.map(findingChip).join('')}</div>` : ''}</td>
     </tr>`;
   });
