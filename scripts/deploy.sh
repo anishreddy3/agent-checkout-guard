@@ -34,12 +34,21 @@ if [[ -n "${GEMINI_API_KEY:-}" ]]; then
   else
     printf '%s' "$GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=-
   fi
-  SECRET_FLAG=(--set-secrets "GEMINI_API_KEY=gemini-api-key:latest")
+  SECRETS="GEMINI_API_KEY=gemini-api-key:latest"
 else
   echo "==> No GEMINI_API_KEY given; using Vertex AI with the service identity"
   ENV_VARS="$ENV_VARS,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-us-central1}"
-  SECRET_FLAG=()
+  SECRETS=""
 fi
+# Optional: Sarvam speech for Indian languages in voice step-up. Create the
+# secret once with: gcloud secrets create sarvam-api-key --data-file=-
+gcloud services enable secretmanager.googleapis.com texttospeech.googleapis.com >/dev/null
+if gcloud secrets describe sarvam-api-key >/dev/null 2>&1; then
+  echo "==> Using sarvam-api-key from Secret Manager"
+  SECRETS="${SECRETS:+$SECRETS,}SARVAM_API_KEY=sarvam-api-key:latest"
+fi
+SECRET_FLAG=()
+if [[ -n "$SECRETS" ]]; then SECRET_FLAG=(--set-secrets "$SECRETS"); fi
 if [[ -n "${ADMIN_TOKEN:-}" ]]; then ENV_VARS="$ENV_VARS,ADMIN_TOKEN=$ADMIN_TOKEN"; fi
 
 echo "==> Deploying to Cloud Run (source build)"

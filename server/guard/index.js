@@ -118,7 +118,7 @@ export async function evaluate({ session, seller, risk_signals = {}, payment_dat
 }
 
 // Human review of a step-up: approve or reject from the dashboard.
-export async function resolveReview(decisionId, action, reviewer = 'dashboard') {
+export async function resolveReview(decisionId, action, reviewer = 'dashboard', evidence = undefined) {
   const store = getStore();
   const decision = await store.get('decisions', decisionId);
   if (!decision) return null;
@@ -143,7 +143,7 @@ export async function resolveReview(decisionId, action, reviewer = 'dashboard') 
     };
   }
   await store.set('sessions', session.id, next);
-  const updated = { ...decision, review: { action, reviewer, at: new Date().toISOString() } };
+  const updated = { ...decision, review: { action, reviewer, at: new Date().toISOString(), ...(evidence ? { evidence } : {}) } };
   await store.set('decisions', decisionId, updated);
   await store.add('events', {
     type: 'review.resolved',

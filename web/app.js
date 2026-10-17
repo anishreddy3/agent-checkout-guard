@@ -47,6 +47,14 @@ const findingChip = (f) => {
 };
 const agentShort = (profile) => String(profile || '').split('/').pop();
 const sellerShort = (name) => String(name || '').replace(' (example seller)', '');
+const reviewLabel = (rv) => {
+  const verb = rv.action === 'approve' ? 'Approved' : 'Rejected';
+  const lang = rv.evidence?.channel === 'voice' ? status?.voice?.languages?.find((l) => l.code === rv.evidence.language)?.name : null;
+  return lang ? `${verb} by voice, in ${lang}` : `${verb} by a reviewer`;
+};
+const voiceReady = () => Boolean(status?.gemini?.configured && status?.voice);
+const voiceButton = (id) =>
+  voiceReady() ? `<button type="button" class="btn voice-btn" data-voice="${esc(id)}">${icon('mic')}Confirm by voice</button>` : '';
 
 async function api(path, opts) {
   const r = await fetch(API + path, { headers: { 'content-type': 'application/json' }, ...opts });
@@ -148,7 +156,8 @@ $('#run-body').addEventListener('click', async (e) => {
   const start = e.target.closest('[data-start]');
   if (start) return document.querySelector(`[data-run="${start.dataset.start}"]`)?.click();
   const rv = e.target.closest('[data-review]');
-  if (rv) await review(rv);
+  if (rv) return review(rv);
+  onVoiceClick(e);
 });
 
 const decisionById = (id) => decisions.find((d) => d.id === id);
@@ -161,8 +170,8 @@ function verdictCard(r, { full }) {
   const actions =
     r.outcome === 'step_up' && full
       ? reviewed
-        ? `<span class="meta">${reviewed.action === 'approve' ? 'Approved' : 'Rejected'} by a reviewer.</span>`
-        : `<div class="actions"><button type="button" class="btn approve" data-review="approve" data-id="${esc(r.decision_id)}">${icon('check')}Approve purchase</button><button type="button" class="btn reject" data-review="reject" data-id="${esc(r.decision_id)}">${icon('x')}Reject</button></div>`
+        ? `<span class="meta">${esc(reviewLabel(reviewed))}.${reviewed.evidence?.transcript ? ` Heard: “${esc(reviewed.evidence.transcript)}”` : ''}</span>`
+        : `<div class="actions"><button type="button" class="btn approve" data-review="approve" data-id="${esc(r.decision_id)}">${icon('check')}Approve purchase</button><button type="button" class="btn reject" data-review="reject" data-id="${esc(r.decision_id)}">${icon('x')}Reject</button>${voiceButton(r.decision_id)}</div><div class="voice-slot" data-slot="${esc(r.decision_id)}"></div>`
       : '';
   return `<div class="verdict ${esc(r.outcome)}">
     <div class="verdict-top">${chip(r.outcome)}<span class="ucp">UCP status <code translate="no">${esc(r.status)}</code>${r.order_id ? ` · order <code>${esc(r.order_id)}</code>` : ''}</span></div>
@@ -247,7 +256,8 @@ async function pollRun() {
   if (currentRun.status !== 'running') {
     setRunning(false, currentRun.scenario_id);
     const o = OUTCOME[currentRun.final_outcome]?.label ?? currentRun.status;
-    $('#run-announce').textContent = `${currentRun.title}: ${o}.`;
+    const announce = $('#run-announce');
+    if (announce) announce.textContent = `${currentRun.title}: ${o}.`;
     await refresh();
   }
   renderRun(currentRun);
@@ -266,6 +276,175 @@ async function review(btn) {
   }
   await refresh();
   if (currentRun) renderRun(currentRun);
+}
+
+// ---- voice step-up -------------------------------------------------------------
+// The reviewer hears the held purchase in their language and answers out loud.
+// Approval only counts when the spoken amount matches the charge (server-side).
+let voice = null; // { id, slot, rec }
+
+function voiceLang() {
+  try { return localStorage.getItem('acg-voice-lang') || 'en-US'; } catch { return 'en-US'; }
+}
+
+function onVoiceClick(e) {
+  const open = e.target.closest('[data-voice]');
+  if (open) return openVoice(open.dataset.voice);
+  const act = e.target.closest('[data-vact]');
+  if (!act || !voice) return;
+  if (act.dataset.vact === 'prompt') return voicePrompt();
+  if (act.dataset.vact === 'record') return voiceRecord();
+  if (act.dataset.vact === 'stop') return voice.rec?.stop();
+  if (act.dataset.vact === 'close') return closeVoice();
+}
+
+function openVoice(id) {
+  closeVoice();
+  const slot = document.querySelector(`.voice-slot[data-slot="${CSS.escape(id)}"]`);
+  if (!slot) return;
+  voice = { id, slot, rec: null };
+  const langs = status.voice.languages;
+  const current = voiceLang();
+  slot.innerHTML = `<div class="voice">
+    <div class="voice-row">
+      <label class="voice-lang">Language
+        <select data-vlang>${langs.map((l) => `<option value="${l.code}"${l.code === current ? ' selected' : ''}>${esc(l.label)}${l.label !== l.name ? ` · ${esc(l.name)}` : ''}</option>`).join('')}</select>
+      </label>
+      <button type="button" class="btn primary" data-vact="prompt">${icon('play')}Hear the request</button>
+      <button type="button" class="link" data-vact="close">Close</button>
+    </div>
+    <div class="voice-body" aria-live="polite"><p class="meta">Gemini writes the question in this language and it is read aloud. Then answer out loud, saying “approve” and the amount, or “reject”.</p></div>
+    <p class="voice-engine meta"></p>
+  </div>`;
+  slot.querySelector('[data-vlang]').addEventListener('change', (e) => {
+    try { localStorage.setItem('acg-voice-lang', e.target.value); } catch {}
+  });
+}
+
+function closeVoice() {
+  if (!voice) return;
+  const reviewed = voice.done;
+  voice.rec?.cancel();
+  voice.slot.innerHTML = '';
+  voice = null;
+  if (reviewed) refresh().then(() => currentRun && renderRun(currentRun));
+}
+
+const vbody = () => voice.slot.querySelector('.voice-body');
+const vlang = () => voice.slot.querySelector('[data-vlang]').value;
+const engineName = (code) => (status.voice.languages.find((l) => l.code === code)?.speech === 'sarvam' ? 'Sarvam' : 'Google Cloud');
+
+async function voicePrompt() {
+  const code = vlang();
+  vbody().innerHTML = '<div class="working"><i></i>Gemini is writing the question…</div>';
+  try {
+    const p = await api(`/api/decisions/${voice.id}/voice/prompt`, { method: 'POST', body: JSON.stringify({ language: code }) });
+    vbody().innerHTML = `
+      <p class="voice-text" lang="${esc(code)}">${esc(p.text)}</p>
+      <audio controls src="data:${esc(p.mime)};base64,${p.audio}"></audio>
+      <div class="voice-row"><button type="button" class="btn approve" data-vact="record">${icon('mic')}Answer out loud</button><span class="meta">Up to 10 seconds</span></div>`;
+    voice.slot.querySelector('.voice-engine').textContent = `Question by ${p.text_source === 'gemini' ? 'Gemini' : 'template'}, voice by ${p.engine === 'sarvam' ? 'Sarvam Bulbul' : 'Google Cloud Text-to-Speech'}.`;
+    vbody().querySelector('audio').play().catch(() => {});
+  } catch (err) {
+    vbody().innerHTML = `<p class="voice-err">Could not prepare the question (${esc(err.message)}). Use Approve or Reject instead.</p>`;
+  }
+}
+
+async function voiceRecord() {
+  const code = vlang();
+  const row = vbody().querySelector('[data-vact="record"]')?.parentElement;
+  vbody().querySelector('audio')?.pause();
+  try {
+    voice.rec = await recordWav(10000, (lvl) => {
+      const bar = vbody().querySelector('.level i');
+      if (bar) bar.style.transform = `scaleX(${Math.min(1, lvl * 6)})`;
+    });
+  } catch (err) {
+    row.innerHTML = `<p class="voice-err">Microphone not available (${esc(err.message)}). Allow microphone access, or use Approve or Reject.</p>`;
+    return;
+  }
+  row.innerHTML = `<button type="button" class="btn reject" data-vact="stop">Stop</button><span class="level" aria-hidden="true"><i></i></span><span class="meta">Listening…</span>`;
+  const wav = await voice.rec.done;
+  if (!voice || !wav) return;
+  row.innerHTML = `<div class="working"><i></i>${engineName(code) === 'Sarvam' ? 'Sarvam transcribes, Gemini reads the answer…' : 'Gemini is listening to the answer…'}</div>`;
+  try {
+    const r = await fetch(`${API}/api/decisions/${voice.id}/voice/answer?language=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'content-type': 'audio/wav' }, body: wav });
+    const out = await r.json();
+    if (!r.ok) throw new Error(out?.error?.message ?? `status ${r.status}`);
+    const amount = out.spoken_amount == null ? 'no amount' : fmt(Math.round(out.spoken_amount * 100));
+    const cls = out.action === 'approve' ? 'approve' : out.action === 'reject' ? 'decline' : 'step_up';
+    row.outerHTML = `<div class="voice-result ${cls}">
+      <p><span class="k">Heard</span> <span lang="${esc(code)}">“${esc(out.transcript || '…')}”</span></p>
+      <p><span class="k">Understood</span> ${esc(out.decision)}, ${esc(amount)}. ${esc(out.summary ?? '')}</p>
+      <p class="verdict-line">${chip(out.action === 'approve' ? 'approve' : out.action === 'reject' ? 'decline' : 'step_up', 'sm')} ${esc(out.reason)}</p>
+      <div class="voice-row">${out.action ? `<button type="button" class="btn" data-vact="close">Done</button>` : `<button type="button" class="btn approve" data-vact="record">${icon('mic')}Try again</button>`}</div>
+    </div>`;
+    if (out.action) {
+      voice.done = true;
+      await refresh();
+    }
+  } catch (err) {
+    row.innerHTML = `<p class="voice-err">Could not check the answer (${esc(err.message)}). Try again or use the buttons.</p>`;
+  }
+}
+
+// Records mono audio and returns 16 kHz 16-bit WAV, which both Sarvam and
+// Gemini accept on every browser (MediaRecorder formats vary by browser).
+async function recordWav(maxMs, onLevel) {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ctx.createMediaStreamSource(stream);
+  const proc = ctx.createScriptProcessor(4096, 1, 1);
+  const chunks = [];
+  proc.onaudioprocess = (e) => {
+    const d = e.inputBuffer.getChannelData(0);
+    chunks.push(new Float32Array(d));
+    let sum = 0;
+    for (let i = 0; i < d.length; i++) sum += d[i] * d[i];
+    onLevel?.(Math.sqrt(sum / d.length));
+  };
+  src.connect(proc);
+  proc.connect(ctx.destination);
+  let resolve;
+  const done = new Promise((r) => (resolve = r));
+  let ended = false;
+  const finish = (keep) => {
+    if (ended) return;
+    ended = true;
+    clearTimeout(timer);
+    proc.disconnect();
+    src.disconnect();
+    stream.getTracks().forEach((t) => t.stop());
+    const rate = ctx.sampleRate;
+    ctx.close();
+    resolve(keep ? toWav(chunks, rate, 16000) : null);
+  };
+  const timer = setTimeout(() => finish(true), maxMs);
+  return { done, stop: () => finish(true), cancel: () => finish(false) };
+}
+
+function toWav(chunks, inRate, outRate) {
+  const len = chunks.reduce((a, c) => a + c.length, 0);
+  const all = new Float32Array(len);
+  let o = 0;
+  for (const c of chunks) { all.set(c, o); o += c.length; }
+  const ratio = inRate / outRate;
+  const n = Math.floor(len / ratio);
+  const buf = new DataView(new ArrayBuffer(44 + n * 2));
+  const str = (off, s) => [...s].forEach((ch, i) => buf.setUint8(off + i, ch.charCodeAt(0)));
+  str(0, 'RIFF'); buf.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+  buf.setUint32(24, outRate, true); buf.setUint32(28, outRate * 2, true); buf.setUint16(32, 2, true); buf.setUint16(34, 16, true);
+  str(36, 'data'); buf.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    // Average the input samples that fall into this output sample.
+    const start = Math.floor(i * ratio), end = Math.min(len, Math.floor((i + 1) * ratio));
+    let sum = 0;
+    for (let j = start; j < end; j++) sum += all[j];
+    const v = Math.max(-1, Math.min(1, sum / Math.max(1, end - start)));
+    buf.setInt16(44 + i * 2, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+  }
+  return new Blob([buf], { type: 'audio/wav' });
 }
 
 // ---- metrics -----------------------------------------------------------------
@@ -300,6 +479,8 @@ function renderMetrics() {
 
 // ---- review queue ------------------------------------------------------------
 function renderQueue() {
+  // Leave the queue alone while a voice review is open inside it.
+  if (voice && $('#queue-list').contains(voice.slot)) return;
   const waiting = decisions.filter((d) => d.outcome === 'step_up' && !d.review);
   $('#queue-count').hidden = !waiting.length;
   $('#queue-count').textContent = waiting.length;
@@ -311,7 +492,8 @@ function renderQueue() {
           <div class="what"><span class="amt">${fmt(d.total, d.currency)}</span><span>${esc(sellerShort(d.seller_name))}</span><span class="meta">${d.cart.map((c) => `${c.quantity} × ${esc(c.title)}`).join(', ')}</span><span class="meta">by ${esc(agentShort(d.agent_profile))}, ${ago(d.at)}</span></div>
           <p class="why">${esc(d.explanation)}</p>
         </div>
-        <div class="actions"><button type="button" class="btn approve" data-review="approve" data-id="${esc(d.id)}">${icon('check')}Approve</button><button type="button" class="btn reject" data-review="reject" data-id="${esc(d.id)}">${icon('x')}Reject</button></div>
+        <div class="actions"><button type="button" class="btn approve" data-review="approve" data-id="${esc(d.id)}">${icon('check')}Approve</button><button type="button" class="btn reject" data-review="reject" data-id="${esc(d.id)}">${icon('x')}Reject</button>${voiceButton(d.id)}</div>
+        <div class="voice-slot" data-slot="${esc(d.id)}"></div>
       </div>`
         )
         .join('')
@@ -319,14 +501,15 @@ function renderQueue() {
 }
 $('#queue-list').addEventListener('click', (e) => {
   const rv = e.target.closest('[data-review]');
-  if (rv) review(rv);
+  if (rv) return review(rv);
+  onVoiceClick(e);
 });
 
 // ---- decision log ------------------------------------------------------------
 function renderDecisions() {
   const rows = decisions.map((d) => {
     const cart = d.cart.map((c) => `${c.quantity} × ${esc(c.title)}`).join('<br>');
-    const rv = d.outcome === 'step_up' ? `<span class="rv">${d.review ? `${d.review.action === 'approve' ? 'Approved' : 'Rejected'} by reviewer` : 'Waiting for a human'}</span>` : '';
+    const rv = d.outcome === 'step_up' ? `<span class="rv">${d.review ? esc(reviewLabel(d.review)) : 'Waiting for a human'}</span>` : '';
     return `<tr id="dec-${esc(d.id)}">
       <td class="when" title="${esc(d.at)}">${ago(d.at)}</td>
       <td class="ag"><span class="agent">${esc(agentShort(d.agent_profile))}</span></td>

@@ -18,6 +18,7 @@ import { policyFor, savePolicy, DEFAULT_POLICY } from './guard/policy.js';
 import { startRun } from './agent/runner.js';
 import { SCENARIOS } from './agent/scenarios.js';
 import { geminiStatus } from './gemini.js';
+import { voiceStatus, speak, writePrompt, hear, voiceOutcome, VOICE_LANGUAGES } from './voice.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', 'web');
@@ -46,6 +47,7 @@ export function createApp() {
         service: 'agent-checkout-guard',
         store: getStore().kind,
         gemini: geminiStatus(),
+        voice: voiceStatus(),
         ucp_version: '2026-01-11',
         sellers: listSellers().map((s) => s.id),
       });
@@ -128,6 +130,48 @@ export function createApp() {
     if (!d) return res.status(404).json({ error: { code: 'not_found' } });
     res.json(d);
   }));
+  // ---- voice step-up -------------------------------------------------------
+  // Only a pending step-up can be confirmed by voice.
+  async function pendingStepUp(req, res) {
+    const d = await getStore().get('decisions', req.params.id);
+    if (!d) {
+      res.status(404).json({ error: { code: 'not_found' } });
+      return null;
+    }
+    if (d.outcome !== 'step_up' || d.review) {
+      res.status(409).json({ error: { code: 'not_pending', message: 'This purchase is not waiting for review.' } });
+      return null;
+    }
+    return d;
+  }
+  const knownLanguage = (code) => VOICE_LANGUAGES.some((l) => l.code === code);
+  app.post('/api/decisions/:id/voice/prompt', wrap(async (req, res) => {
+    const language = String(req.body?.language ?? '');
+    if (!knownLanguage(language)) return res.status(400).json({ error: { code: 'unsupported_language' } });
+    const d = await pendingStepUp(req, res);
+    if (!d) return;
+    const prompt = await writePrompt(d, language);
+    const audio = await speak(prompt.text, language);
+    res.json({ language, text: prompt.text, text_source: prompt.source, ...audio });
+  }));
+  app.post(
+    '/api/decisions/:id/voice/answer',
+    express.raw({ type: ['audio/wav', 'audio/x-wav'], limit: '4mb' }),
+    wrap(async (req, res) => {
+      const language = String(req.query.language ?? '');
+      if (!knownLanguage(language)) return res.status(400).json({ error: { code: 'unsupported_language' } });
+      if (!Buffer.isBuffer(req.body) || req.body.length < 1000) return res.status(400).json({ error: { code: 'no_audio', message: 'No recording received.' } });
+      const d = await pendingStepUp(req, res);
+      if (!d) return;
+      const answer = await hear(req.body, language, d);
+      const outcome = voiceOutcome(answer, d.total);
+      const evidence = { channel: 'voice', language, transcript: answer.transcript, spoken_amount: answer.spoken_amount, heard_by: answer.heard_by };
+      const review = outcome.action ? await resolveReview(d.id, outcome.action, `voice:${language}`, evidence) : null;
+      await getStore().add('events', { type: 'review.voice_attempt', at: new Date().toISOString(), decision_id: d.id, checkout_id: d.checkout_id, agent_profile: d.agent_profile, ...evidence, decision: answer.decision, action: outcome.action });
+      res.json({ ...answer, action: outcome.action, reason: outcome.reason, review: review?.review ?? null });
+    })
+  );
+
   app.get('/api/events', wrap(async (req, res) => {
     res.json(await getStore().query('events', [], { orderBy: 'at', limit: Number(req.query.limit) || 200 }));
   }));

@@ -79,6 +79,24 @@ test('step-up can be approved by a reviewer and the session completes', async ()
   assert.ok(after.order?.id);
 });
 
+test('voice step-up routes validate language, audio and review state', async () => {
+  const decisions = await fetch(`${origin}/api/decisions`).then(json);
+  const reviewed = decisions.find((d) => d.outcome === 'step_up' && d.review);
+  assert.ok(reviewed, 'the reviewed step-up from the previous test');
+  const bad = await fetch(`${origin}/api/decisions/${reviewed.id}/voice/prompt`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language: 'xx-XX' }),
+  });
+  assert.equal(bad.status, 400);
+  const done = await fetch(`${origin}/api/decisions/${reviewed.id}/voice/prompt`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ language: 'hi-IN' }),
+  });
+  assert.equal(done.status, 409);
+  const empty = await fetch(`${origin}/api/decisions/${reviewed.id}/voice/answer?language=ja-JP`, {
+    method: 'POST', headers: { 'content-type': 'audio/wav' }, body: new Uint8Array(10),
+  });
+  assert.equal(empty.status, 400);
+});
+
 test('decisions carry explanations and latency', async () => {
   const decisions = await fetch(`${origin}/api/decisions`).then(json);
   assert.ok(decisions.length >= 6);

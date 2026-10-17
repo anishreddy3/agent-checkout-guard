@@ -16,7 +16,8 @@
   "dependencies": {
     "@google-cloud/firestore": "^7.11.0",
     "@google/genai": "^1.9.0",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "google-auth-library": "^10.9.1"
   },
   "license": "Apache-2.0"
 }

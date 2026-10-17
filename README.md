@@ -30,6 +30,7 @@ server/
   agent/scenarios.js Six demo scenarios (routine, over budget, stale quote, runaway loop, injected catalog, velocity)
   store/index.js     Firestore persistence with an in-memory fallback
   gemini.js          Gemini client (Google AI Studio key or Vertex AI)
+  voice.js           Voice step-up: prompts, speech (Sarvam or Google), spoken-amount check
 web/                 Dashboard: vanilla JS, served by Firebase Hosting
 test/                Unit tests for the rules and an HTTP end-to-end test of every scenario
 scripts/deploy.sh    Cloud Run + Firestore + Firebase Hosting deploy
@@ -47,11 +48,17 @@ docs/                Architecture and flow diagrams
 
 **Gemini** (default `gemini-2.5-flash`, via Google AI Studio or Vertex AI) does three jobs: it is the buyer agent (function calling over `list_sellers`, `get_catalog`, `buy`, `finish`), it extracts the human's purchase intent from the request text so the Guard can compare the cart with what was asked, and it writes the two-sentence explanation attached to every decision. Every Gemini call has a deterministic fallback, so the service degrades to rules-only explanations and a scripted agent instead of failing.
 
+## Voice step-up, in the reviewer's language
+
+A step-up can be confirmed out loud in 13 widely spoken JAPAC languages: English, Mandarin, Hindi, Japanese, Indonesian, Bengali, Vietnamese, Korean, Thai, Filipino, Malay, Tamil and Telugu. Gemini writes the question in the chosen language (who is being paid, how much, why it was held) and it is read aloud. The reviewer answers, for example "approve, 199 dollars". The answer is turned into a decision and a spoken amount, and the Guard approves only when **the spoken amount matches the charge**, so a bare "yes" never approves a changed price. Rejections need no amount.
+
+Speech comes from [Sarvam](https://www.sarvam.ai) (Bulbul text-to-speech, Saaras speech-to-text, which handles code-mixed speech such as Hindi with English numbers) for Indian languages when `SARVAM_API_KEY` is set, and from Google Cloud Text-to-Speech for every other language, with Gemini listening to the recording directly. Gemini makes every judgement in both paths; the speech providers only speak and transcribe. The rule lives in `voiceOutcome` in `server/voice.js` and is unit-tested. The transcript, language and spoken amount are stored on the review as evidence.
+
 ## Run it locally
 
 ```bash
 npm install
-npm test                      # 14 tests, in-memory store, no network
+npm test                      # 19 tests, in-memory store, no network
 npm start                     # http://localhost:8080, in-memory store, rules-only explanations
 ```
 
