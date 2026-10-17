@@ -19,7 +19,7 @@ import {
 const platform = generateKey('platform-trusted-surface-1');
 const sellerKey = generateKey('pelican_mail-checkout-1');
 const rootKeyFor = (h) => (h.kid === platform.kid ? publicJwk(platform) : null);
-const merchant = merchantOf({ id: 'pelican_mail', name: 'Pelican Mail (example seller)' });
+const merchant = merchantOf({ id: 'pelican_mail', name: 'Pelican Mail' });
 const AUD = 'https://shop.example/sellers/pelican_mail';
 
 function session({ id = 'chk_1', qty = 1, total = 19900 } = {}) {

@@ -1,6 +1,6 @@
-// AP2 signing keys for the demo's parties.
+// AP2 signing keys for the parties in the simulated workflow.
 //
-//   sellers[id]  each example seller signs its checkouts (UCP merchant_authorization,
+//   sellers[id]  each illustrative seller signs its checkouts (UCP merchant_authorization,
 //                AP2 checkout_jwt) and its Checkout Receipts.
 //   platform     the buyer platform's Trusted Surface: signs mandates after the
 //                human approves them (AP2 "Trusted Agent Provider" model).

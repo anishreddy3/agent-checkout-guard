@@ -109,7 +109,7 @@ function mandateTerms(sellerId, items, maxOverride) {
   return { lines, maxAmount: maxOverride ?? priced };
 }
 
-// forged: the agent "approves" its own mandate with a key it made up, using
+// forged: the agent "approves" its own mandate with a key it generated, using
 // the platform's key id. The seller must reject it.
 async function approveMandate(trace, ctx, sellerId, items, maxOverride) {
   const seller = SELLERS[sellerId];
@@ -162,7 +162,7 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
           payee: created.merchant,
           amount: quoted,
           currency: created.currency,
-          instrument: { id: 'instr_demo_card', type: 'card', description: 'Demo card (test only)' },
+          instrument: { id: 'instr_demo_card', type: 'card', description: 'Corporate card (test network)' },
         });
         ap2Body = { checkout_mandate: closed.checkoutMandate };
         paymentData = { ...paymentData, token: closed.paymentMandate };
@@ -185,7 +185,7 @@ async function purchase(client, trace, { seller_id, items, expected_total }, int
       expected_total: expected_total ?? quoted,
       intent: intentFor(seller_id, intent),
       user_request: request,
-      agent_runtime: 'agent-checkout-guard/demo',
+      agent_runtime: 'agent-checkout-guard/0.1',
     },
   });
   const guard = completed['x-guard'];

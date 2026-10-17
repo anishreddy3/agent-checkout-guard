@@ -13,7 +13,7 @@ flowchart LR
   subgraph CloudRun[Cloud Run: agent-checkout-guard]
     A[Buyer agent runner<br/>Gemini function calling]
     TS[Platform Trusted Surface<br/>signs AP2 open mandates]
-    S[Example sellers<br/>UCP /.well-known/ucp<br/>checkout-sessions REST<br/>sign checkouts]
+    S[Illustrative sellers<br/>UCP /.well-known/ucp<br/>checkout-sessions REST<br/>sign checkouts]
     G[Guard<br/>AP2 verification + rules<br/>+ Gemini explanation]
   end
   subgraph Google

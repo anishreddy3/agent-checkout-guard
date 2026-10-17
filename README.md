@@ -14,7 +14,7 @@ Agent Checkout Guard puts a risk decision at the one point every agent purchase 
 
 Gemini writes the explanation for every decision and powers the buyer agent in the demo.
 
-Built for the Google Cloud AI Builder Cup 2026 (BFSI and Retail tracks). All sellers, products, prices and agents in this repo are illustrative. No real payments are made.
+Built for the Google Cloud AI Builder Cup 2026 (BFSI and Retail tracks). The sellers, catalogs, prices and agents are illustrative simulations of a real agent-commerce workflow. Payments use a test payment handler, so no money moves.
 
 ## What is in the box
 
@@ -22,7 +22,7 @@ Built for the Google Cloud AI Builder Cup 2026 (BFSI and Retail tracks). All sel
 server/
   index.js           Express app: UCP endpoints, Guard API, agent runs, dashboard API
   ucp/checkout.js    UCP checkout capability (create, get, update, complete, cancel)
-  sellers/catalog.js Three example sellers with machine-readable pricing and volume tiers
+  sellers/catalog.js Three illustrative sellers with machine-readable pricing and volume tiers
   guard/rules.js     Pure risk rules (AP2 mandate, quote mismatch, spend caps, velocity, duplicates, intent match, seller trust)
   guard/index.js     Loads history from Firestore, scores, asks Gemini to explain, persists the decision
   guard/policy.js    Per-agent spend policy with defaults
@@ -44,7 +44,7 @@ docs/                Architecture and flow diagrams
 
 ## How Google Cloud is used
 
-**Cloud Run** runs the whole backend as one container: the three example sellers' UCP endpoints (`/.well-known/ucp`, `/checkout-sessions`), the Guard, and the buyer agent runner. Source-based deploy, min one instance so the evaluation link stays warm.
+**Cloud Run** runs the whole backend as one container: the three illustrative sellers' UCP endpoints (`/.well-known/ucp`, `/checkout-sessions`), the Guard, and the buyer agent runner. Source-based deploy, min one instance so the evaluation link stays warm.
 
 **Firestore** is the system of record. Collections: `sessions` (UCP checkout sessions and their quote history), `decisions` (every Guard decision with findings, explanation and latency), `events` (an append-only audit trail used for velocity and daily-spend checks), `agents` (per-agent spend policies) and `runs` (agent run traces the dashboard polls). The Guard's history queries (recent attempts by agent, completed sessions today) are Firestore queries with composite indexes in `firestore.indexes.json`.
 
@@ -154,7 +154,7 @@ The intent used for the cart comparison is extracted from the human's request by
 
 ## What is real and what is simulated
 
-Real: UCP discovery and the checkout REST binding (create, get, update, complete, cancel, status machine, `continue_url`, `risk_signals`), AP2 mandate signing and verification (ES256, SD-JWT chains, constraints, receipts), the Guard, Gemini calls, Firestore persistence, the dashboard, the deploy. Simulated: payments (UCP mock payment handler with `success_token` / `fail_token`), UCP request signatures (the header is sent but not verified), the human's approval on the Trusted Surface (the scenario stands in for the click), and the three sellers themselves. The Guard's rules and thresholds are defaults chosen for the demo, not tuned on real transaction data.
+Real: UCP discovery and the checkout REST binding (create, get, update, complete, cancel, status machine, `continue_url`, `risk_signals`), AP2 mandate signing and verification (ES256, SD-JWT chains, constraints, receipts), the Guard, Gemini calls, Firestore persistence, the dashboard, the deploy. Simulated: payments (UCP mock payment handler with `success_token` / `fail_token`), UCP request signatures (the header is sent but not verified), the human's approval on the Trusted Surface (the scenario stands in for the click), and the three sellers, which are illustrative. The Guard's rules and thresholds are sensible defaults for these simulations, not tuned on real transaction data.
 
 ## License
 

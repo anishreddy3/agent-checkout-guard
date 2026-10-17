@@ -51,7 +51,7 @@ const findingChip = (f) => {
   return `<span class="finding ${esc(sev)}" title="${esc(title)}"><i></i>${esc(FINDING[code] ?? code)}</span>`;
 };
 const agentShort = (profile) => String(profile || '').split('/').pop();
-const sellerShort = (name) => String(name || '').replace(' (example seller)', '');
+const sellerShort = (name) => String(name || '');
 const reviewLabel = (rv) => {
   const verb = rv.action === 'approve' ? 'Approved' : 'Rejected';
   const lang = rv.evidence?.channel === 'voice' ? status?.voice?.languages?.find((l) => l.code === rv.evidence.language)?.name : null;
@@ -627,7 +627,7 @@ async function refresh() {
 }
 
 $('#reset').addEventListener('click', async () => {
-  if (!confirm('Clear all demo sessions and decisions?')) return;
+  if (!confirm('Clear all sessions, decisions and runs from this simulation?')) return;
   await api('/api/reset', { method: 'POST', body: '{}' });
   currentRun = null;
   rendered = { id: null, count: 0 };

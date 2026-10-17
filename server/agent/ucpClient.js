@@ -17,7 +17,7 @@ export class UcpClient {
       'UCP-Agent': `profile="${this.agentProfile}"`,
       'Request-Id': randomUUID(),
       'Idempotency-Key': randomUUID(),
-      // Demo only. A production platform signs the request body.
+      // Not verified in this simulation. A production platform signs the request body.
       'Request-Signature': 'demo',
     };
   }

@@ -92,7 +92,7 @@ export function createApp() {
   app.get('/sellers/:sellerId/legal/:doc', (req, res) => {
     const seller = getSeller(req.params.sellerId);
     if (!seller) return res.sendStatus(404);
-    res.type('text/plain').send(`${seller.name}\n${req.params.doc}\n\nIllustrative document for the demo. Not a real seller.`);
+    res.type('text/plain').send(`${seller.name}\n${req.params.doc}\n\nIllustrative ${req.params.doc === 'privacy' ? 'privacy policy' : 'terms of service'} for a simulated seller in this agent-commerce workflow.`);
   });
   app.get('/sellers/:sellerId/orders/:orderId', (req, res) => {
     res.redirect(`/#order=${encodeURIComponent(req.params.orderId)}`);

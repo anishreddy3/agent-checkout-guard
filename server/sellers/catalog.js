@@ -1,5 +1,6 @@
-// Three illustrative API-first sellers. All names, products and prices are
-// made up for the demo. Prices are integers in minor units (USD cents).
+// Three illustrative API-first sellers, simulating real sellers in an
+// agent-commerce workflow. Names, products and prices are illustrative and
+// not those of any real company. Prices are integers in minor units (USD cents).
 //
 // Each item carries machine-readable pricing: a unit price plus optional
 // volume tiers, so a buyer agent can quote without reading a pricing page.
@@ -7,8 +8,9 @@
 export const SELLERS = {
   pelican_mail: {
     id: 'pelican_mail',
-    name: 'Pelican Mail (example seller)',
-    description: 'Transactional email API. Illustrative seller for the demo.',
+    name: 'Pelican Mail',
+    description: 'Transactional email API with shared or dedicated sending IPs and searchable delivery logs.',
+    illustrative: true,
     currency: 'USD',
     trust: { verified: true },
     items: [
@@ -47,8 +49,9 @@ export const SELLERS = {
 
   granite_vector: {
     id: 'granite_vector',
-    name: 'Granite Vector (example seller)',
-    description: 'Managed vector database. Illustrative seller for the demo.',
+    name: 'Granite Vector',
+    description: 'Managed vector database with replicated pods and daily snapshot backups.',
+    illustrative: true,
     currency: 'USD',
     trust: { verified: true },
     items: [
@@ -84,8 +87,9 @@ export const SELLERS = {
 
   saffron_maps: {
     id: 'saffron_maps',
-    name: 'Saffron Maps (example seller)',
-    description: 'Geocoding and routing API. Illustrative seller for the demo.',
+    name: 'Saffron Maps',
+    description: 'Geocoding, routing and map tile APIs, billed per monthly request volume.',
+    illustrative: true,
     currency: 'USD',
     // This seller is deliberately not verified, and one product carries a
     // prompt-injection string in its description. Both are used by the
@@ -154,6 +158,7 @@ export function publicCatalog(sellerId) {
     seller_id: s.id,
     name: s.name,
     description: s.description,
+    illustrative: Boolean(s.illustrative),
     currency: s.currency,
     items: s.items.map((i) => ({
       id: i.id,

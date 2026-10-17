@@ -112,7 +112,7 @@ export async function speak(text, code) {
 
 // ---- prompt, written by Gemini ------------------------------------------------
 
-const sellerShort = (name) => String(name).replace(' (example seller)', '');
+const sellerShort = (name) => String(name);
 
 function fallbackPrompt(decision) {
   return `A buyer agent wants to pay ${money(decision.total, decision.currency)} to ${sellerShort(decision.seller_name)}. It was held for review. ${decision.explanation} To approve, say approve and the amount. To stop it, say reject.`;

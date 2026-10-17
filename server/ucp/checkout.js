@@ -1,5 +1,5 @@
 // UCP checkout capability (dev.ucp.shopping.checkout, version 2026-01-11)
-// implemented for the example sellers. Field names follow the public spec:
+// implemented for the illustrative sellers. Field names follow the public spec:
 // Checkout { ucp, id, line_items, buyer, status, currency, totals, messages,
 // links, expires_at, continue_url, payment, order }.
 //

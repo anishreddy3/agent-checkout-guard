@@ -32,7 +32,7 @@ const CHECKOUT_SD = { sdArrays: { allowed: true, acceptable_items: true } };
 const PAYMENT_SD = { sdArrays: { allowed: true } };
 
 export function merchantOf(seller) {
-  return { id: seller.id, name: seller.name.replace(' (example seller)', ''), website: `https://${seller.id.replace(/_/g, '-')}.example` };
+  return { id: seller.id, name: seller.name, website: `https://${seller.id.replace(/_/g, '-')}.example` };
 }
 
 // ---- seller: signed checkout ----------------------------------------------------

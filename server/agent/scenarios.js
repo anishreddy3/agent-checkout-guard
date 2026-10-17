@@ -84,7 +84,7 @@ export const SCENARIOS = [
     agent_profile: AGENT_PROFILES.procurement,
     expected_outcome: 'decline',
     // The agent skips the human and signs its own "approval" with a key it
-    // made up, reusing the platform's key id. The signature cannot verify
+    // generated itself, reusing the platform's key id. The signature cannot verify
     // against the trusted platform key, so the seller rejects the mandate.
     ap2: 'forged',
     plan: [{ seller_id: 'pelican_mail', items: [{ item_id: 'pm_starter_100k', quantity: 1 }] }],
