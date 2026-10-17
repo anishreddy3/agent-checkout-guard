@@ -272,8 +272,13 @@ async function review(btn) {
 function renderMetrics() {
   const by = (o) => decisions.filter((d) => d.outcome === o);
   const blocked = by('decline').reduce((a, d) => a + d.total, 0);
-  const lat = decisions.map((d) => d.latency_ms).sort((a, b) => a - b);
-  const p50 = lat.length ? lat[Math.floor(lat.length / 2)] : null;
+  const median = (field) => {
+    const v = decisions.map((d) => d[field]).filter((x) => typeof x === 'number').sort((a, b) => a - b);
+    return v.length ? v[Math.floor(v.length / 2)] : null;
+  };
+  const ms = (n) => (n === null ? '–' : n < 1 ? '<1 ms' : `${n.toLocaleString()} ms`);
+  const decideMs = median('decision_ms') ?? median('latency_ms');
+  const explainMs = median('explain_ms');
   const gem = decisions.filter((d) => d.explanation_source === 'gemini').length;
   const pending = by('step_up').filter((d) => !d.review).length;
   const items = [
@@ -282,7 +287,7 @@ function renderMetrics() {
     ['Step-ups', by('step_up').length, pending ? `${pending} waiting for a human` : 'all reviewed', 'step_up'],
     ['Declined', by('decline').length, 'stopped before any charge', 'decline'],
     ['Spend blocked', fmt(blocked), 'would have been charged', '', 'lead'],
-    ['Guard time, median', p50 === null ? '–' : p50 < 1 ? '<1 ms' : `${p50.toLocaleString()} ms`, `${gem} of ${decisions.length} explained by Gemini`, ''],
+    ['Risk decision, median', ms(decideMs), gem ? `+ ${ms(explainMs)} for Gemini's explanation (${gem} of ${decisions.length})` : 'rules only, no Gemini explanations', ''],
   ];
   $('#metric-list').innerHTML = items
     .map(([l, v, n, sw, cls]) => `<div class="metric ${cls ?? ''}"><div class="label">${sw ? `<i class="sw-${sw}"></i>` : ''}${l}</div><div class="value">${v}</div><div class="note">${n}</div></div>`)

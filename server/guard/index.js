@@ -82,6 +82,7 @@ export async function evaluate({ session, seller, risk_signals = {}, payment_dat
   const history = await loadHistory(session.agent_profile, policy, session.id);
   const findings = runRules({ session, seller, policy, risk_signals, payment_data, history });
   const { risk_score, outcome } = scoreFindings(findings, policy);
+  const decided = Date.now();
   const explanation = await explain(outcome, findings, session, seller, risk_score);
   const decision = {
     id: `dec_${randomUUID().slice(0, 10)}`,
@@ -100,6 +101,10 @@ export async function evaluate({ session, seller, risk_signals = {}, payment_dat
     currency: session.currency,
     cart: session.line_items.map((li) => ({ item_id: li.item.id, title: li.item.title, quantity: li.quantity })),
     risk_signals,
+    // decision_ms: history + rules, the risk decision itself.
+    // explain_ms: the Gemini explanation written after the decision.
+    decision_ms: decided - started,
+    explain_ms: Date.now() - decided,
     latency_ms: Date.now() - started,
     policy_snapshot: {
       per_transaction_cap: policy.per_transaction_cap,

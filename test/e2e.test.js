@@ -86,5 +86,7 @@ test('decisions carry explanations and latency', async () => {
     assert.ok(d.explanation.length > 10);
     assert.equal(d.explanation_source, 'rules');
     assert.ok(Number.isFinite(d.latency_ms));
+    assert.ok(Number.isFinite(d.decision_ms) && Number.isFinite(d.explain_ms));
+    assert.ok(d.decision_ms + d.explain_ms <= d.latency_ms + 1);
   }
 });

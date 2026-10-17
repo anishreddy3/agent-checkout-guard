@@ -29,13 +29,19 @@ for (let round = 0; round < ROUNDS; round++) {
   }
 }
 const decisions = await fetch(`${BASE}/api/decisions?limit=500`).then(json);
-const lat = decisions.map((d) => d.latency_ms).sort((a, b) => a - b);
-const p = (q) => lat[Math.min(lat.length - 1, Math.floor(lat.length * q))];
+const pct = (field) => {
+  const v = decisions.map((d) => d[field]).filter((x) => typeof x === 'number').sort((a, b) => a - b);
+  const at = (q) => v[Math.min(v.length - 1, Math.floor(v.length * q))];
+  return v.length ? `p50 ${at(0.5)} ms, p95 ${at(0.95)} ms, max ${v[v.length - 1]} ms` : 'n/a';
+};
 const gem = decisions.filter((d) => d.explanation_source === 'gemini').length;
 
 console.log(`\nAgent Checkout Guard benchmark  (${BASE}, mode=${rows[0]?.mode}, store=${status.store}, gemini=${status.gemini.configured ? status.gemini.model : 'off'})\n`);
 console.table(rows.map(({ round, scenario, expected, got, ok, ms, calls }) => ({ round, scenario, expected, got, ok, 'run ms': ms, 'http calls': calls })));
 const acc = rows.filter((r) => r.ok).length / rows.length;
 console.log(`Outcome accuracy: ${rows.filter((r) => r.ok).length}/${rows.length} (${(acc * 100).toFixed(0)}%)`);
-console.log(`Guard decisions in last round: ${decisions.length}; latency p50 ${p(0.5)} ms, p95 ${p(0.95)} ms, max ${lat[lat.length - 1]} ms`);
+console.log(`Guard decisions stored: ${decisions.length}`);
+console.log(`  risk decision (history + rules): ${pct('decision_ms')}`);
+console.log(`  Gemini explanation:              ${pct('explain_ms')}`);
+console.log(`  total inside Complete Checkout:  ${pct('latency_ms')}`);
 console.log(`Explanations by Gemini: ${gem}/${decisions.length}`);

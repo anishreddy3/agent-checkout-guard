@@ -35,6 +35,10 @@ export async function getGemini() {
   }
 }
 
+// Short, well-specified tasks (explanations, extraction) don't need Gemini
+// 2.5's thinking step; turning it off cuts latency by seconds.
+const NO_THINKING = { thinkingBudget: 0 };
+
 // Plain text generation with a timeout. Returns null on any failure.
 export async function generateText(prompt, { timeoutMs = 8000, temperature = 0.2, system } = {}) {
   const ai = await getGemini();
@@ -45,7 +49,7 @@ export async function generateText(prompt, { timeoutMs = 8000, temperature = 0.2
     const res = await ai.models.generateContent({
       model: GEMINI_MODEL,
       contents: prompt,
-      config: { temperature, systemInstruction: system, abortSignal: ctrl.signal },
+      config: { temperature, systemInstruction: system, thinkingConfig: NO_THINKING, abortSignal: ctrl.signal },
     });
     return res.text?.trim() || null;
   } catch (err) {
@@ -71,6 +75,7 @@ export async function generateJson(prompt, { schema, timeoutMs = 10000, temperat
         systemInstruction: system,
         responseMimeType: 'application/json',
         responseSchema: schema,
+        thinkingConfig: NO_THINKING,
         abortSignal: ctrl.signal,
       },
     });
