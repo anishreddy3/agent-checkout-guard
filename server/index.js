@@ -37,7 +37,8 @@ export function createApp() {
   const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
   // ---- health and status ---------------------------------------------------
-  app.get('/healthz', (req, res) => res.json({ ok: true }));
+  // Cloud Run's frontend reserves /healthz, so health lives under /api.
+  app.get('/api/health', (req, res) => res.json({ ok: true }));
   app.get(
     '/api/status',
     wrap(async (req, res) => {

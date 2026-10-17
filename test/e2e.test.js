@@ -33,6 +33,10 @@ async function waitRun(id) {
   throw new Error('run did not finish');
 }
 
+test('health is served under /api (Cloud Run reserves /healthz)', async () => {
+  assert.deepEqual(await fetch(`${origin}/api/health`).then(json), { ok: true });
+});
+
 test('UCP discovery manifest is served per seller', async () => {
   const m = await fetch(`${origin}/sellers/pelican_mail/.well-known/ucp`).then(json);
   assert.equal(m.ucp.version, '2026-01-11');

@@ -50,7 +50,7 @@ gcloud run deploy "$SERVICE" \
   --min-instances 1 \
   --memory 512Mi \
   --set-env-vars "$ENV_VARS" \
-  "${SECRET_FLAG[@]}"
+  ${SECRET_FLAG[@]+"${SECRET_FLAG[@]}"}
 
 RUN_URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format 'value(status.url)')"
 echo "==> Cloud Run URL: $RUN_URL"

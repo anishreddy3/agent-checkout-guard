@@ -225,8 +225,9 @@ async function runGemini({ scenario, client, trace, intent }) {
         let out;
         try {
           if (call.name === 'list_sellers') {
-            out = await client.listSellers();
-            await trace.push({ kind: 'tool', name: 'list_sellers', result: { sellers: out.map((s) => s.id) } });
+            // functionResponse.response must be an object, not an array.
+            out = { sellers: await client.listSellers() };
+            await trace.push({ kind: 'tool', name: 'list_sellers', result: { sellers: out.sellers.map((s) => s.id) } });
           } else if (call.name === 'get_catalog') {
             await client.discover(call.args.seller_id);
             out = await client.catalog(call.args.seller_id);

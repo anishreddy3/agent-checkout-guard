@@ -51,7 +51,7 @@ docs/                Architecture and flow diagrams
 
 ```bash
 npm install
-npm test                      # 13 tests, in-memory store, no network
+npm test                      # 14 tests, in-memory store, no network
 npm start                     # http://localhost:8080, in-memory store, rules-only explanations
 ```
 
