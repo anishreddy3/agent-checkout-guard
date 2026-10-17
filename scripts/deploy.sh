@@ -9,7 +9,7 @@ set -euo pipefail
 PROJECT_ID="${PROJECT_ID:?set PROJECT_ID}"
 REGION="${REGION:-asia-south1}"
 SERVICE="${SERVICE:-agent-checkout-guard}"
-GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
+GEMINI_MODEL="${GEMINI_MODEL:-gemini-3-flash-preview}"
 
 cd "$(dirname "$0")/.."
 
@@ -37,7 +37,7 @@ if [[ -n "${GEMINI_API_KEY:-}" ]]; then
   SECRETS="GEMINI_API_KEY=gemini-api-key:latest"
 else
   echo "==> No GEMINI_API_KEY given; using Vertex AI with the service identity"
-  ENV_VARS="$ENV_VARS,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-us-central1}"
+  ENV_VARS="$ENV_VARS,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-global}"
   SECRETS=""
 fi
 # Optional: Sarvam speech for Indian languages in voice step-up. Create the

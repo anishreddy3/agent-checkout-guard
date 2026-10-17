@@ -13,7 +13,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { getStore } from '../store/index.js';
-import { getGemini, generateJson, geminiStatus, GEMINI_MODEL } from '../gemini.js';
+import { generateJson, generateWithFallback, geminiStatus, GEMINI_MODEL } from '../gemini.js';
 import { UcpClient, mockCard } from './ucpClient.js';
 import { getScenario } from './scenarios.js';
 import { SELLERS } from '../sellers/catalog.js';
@@ -191,9 +191,11 @@ const TOOLS = [
   },
 ];
 
-async function runGemini({ scenario, client, trace, intent }) {
-  const ai = await getGemini();
+async function runGemini({ scenario, client, trace, intent, onModel }) {
   const results = [];
+  // Gemini 3 ties function-call history to the model that produced it, so the
+  // first call picks the model (primary, else fallback) and the run keeps it.
+  let pinned = null;
   const system = [
     'You are a procurement agent buying API services for a company over the Universal Commerce Protocol.',
     'Use the tools. Read the catalog before buying. Buy only what the user asked for, in the quantity they asked for.',
@@ -206,11 +208,18 @@ async function runGemini({ scenario, client, trace, intent }) {
   for (let r = 0; r < rounds; r++) {
     if (r > 0) contents.push({ role: 'user', parts: [{ text: 'Please do that again, same order.' }] });
     for (let turn = 0; turn < 12; turn++) {
-      const res = await ai.models.generateContent({
-        model: GEMINI_MODEL,
+      const { res, model } = await generateWithFallback({
         contents,
-        config: { systemInstruction: system, tools: TOOLS, temperature: 0.1 },
+        config: { systemInstruction: system, tools: TOOLS },
+        temperature: 0.1,
+        thinking: 'low',
+        timeoutMs: 30000,
+        models: pinned ? [pinned] : undefined,
       });
+      if (!pinned) {
+        pinned = model;
+        await onModel?.(model);
+      }
       const cand = res.candidates?.[0];
       if (!cand?.content) break;
       contents.push(cand.content);
@@ -292,7 +301,7 @@ export async function startRun({ scenarioId, origin, mode }) {
       const intent = await extractIntent(scenario.request, scenario);
       await trace.push({ kind: 'intent', text: 'User intent extracted for the Guard', result: intent });
       const results = useGemini
-        ? await runGemini({ scenario, client, trace, intent })
+        ? await runGemini({ scenario, client, trace, intent, onModel: (m) => { run.model = m; } })
         : await runScripted({ scenario, client, trace, intent });
       run.outcomes = results.map((r) => r.guard?.outcome ?? r.checkout.status);
       run.final_outcome = run.outcomes[run.outcomes.length - 1] ?? null;

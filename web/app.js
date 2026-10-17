@@ -92,7 +92,7 @@ async function loadStatus() {
   try {
     status = await api('/api/status');
     const g = status.gemini.configured
-      ? `<li class="pill"><span class="dot on"></span><span>Gemini <b>${esc(status.gemini.model)}</b>${status.gemini.vertex ? ' on Vertex AI' : ''}</span></li>`
+      ? `<li class="pill"><span class="dot on"></span><span><b>Gemini</b>${status.gemini.vertex ? ' on Vertex AI' : ''}</span></li>`
       : `<li class="pill"><span class="dot off"></span><span>Gemini <b>off</b>, rules-only explanations</span></li>`;
     $('#status').innerHTML = `${g}<li class="pill"><span>Store <b>${status.store === 'firestore' ? 'Firestore' : 'in-memory'}</b></span></li><li class="pill"><span>UCP <b>${esc(status.ucp_version)}</b></span></li>`;
     $('#dec-meta').textContent = `Newest first, ${status.store === 'firestore' ? 'live from Firestore' : 'in-memory store'}`;
@@ -209,7 +209,7 @@ function stepHtml(st, i, lastGuard) {
 function renderRun(run) {
   const firstPaint = rendered.id !== run.id;
   const prev = firstPaint ? 0 : rendered.count;
-  const meta = [`<span class="chip neutral sm">${run.mode === 'gemini' ? `Gemini agent${run.model ? ' · ' + esc(run.model) : ''}` : 'Scripted agent'}</span>`];
+  const meta = [`<span class="chip neutral sm">${run.mode === 'gemini' ? 'Gemini agent' : 'Scripted agent'}</span>`];
   if (run.status === 'done') {
     meta.push(
       run.matched_expectation

@@ -16,7 +16,7 @@ flowchart LR
     G[Guard<br/>rules + Gemini explanation]
   end
   subgraph Google
-    GM[Gemini 2.5 Flash]
+    GM[Gemini 3 Flash<br/>2.5 Flash fallback]
     FS[(Firestore<br/>sessions, decisions,<br/>events, agents, runs)]
   end
   U -- picks a scenario, reviews step-ups --> D

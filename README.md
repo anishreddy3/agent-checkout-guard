@@ -46,7 +46,7 @@ docs/                Architecture and flow diagrams
 
 **Firebase Hosting** serves the dashboard and rewrites `/api/**`, `/sellers/**` and `/review/**` to the Cloud Run service, so the dashboard, the API and the seller endpoints share one origin. Firestore security rules deny all client access; everything goes through the service.
 
-**Gemini** (default `gemini-2.5-flash`, via Google AI Studio or Vertex AI) does three jobs: it is the buyer agent (function calling over `list_sellers`, `get_catalog`, `buy`, `finish`), it extracts the human's purchase intent from the request text so the Guard can compare the cart with what was asked, and it writes the two-sentence explanation attached to every decision. Every Gemini call has a deterministic fallback, so the service degrades to rules-only explanations and a scripted agent instead of failing.
+**Gemini** (default `gemini-3-flash-preview` on the Vertex AI global endpoint, retried once on `gemini-2.5-flash` if a call fails or times out; Google AI Studio keys also work) does three jobs: it is the buyer agent (function calling over `list_sellers`, `get_catalog`, `buy`, `finish`), it extracts the human's purchase intent from the request text so the Guard can compare the cart with what was asked, and it writes the two-sentence explanation attached to every decision. Short tasks run with minimal thinking to keep the explanation under about a second; the buyer agent runs with low thinking for multi-step tool use and keeps one model for the whole run. Every Gemini call also has a deterministic fallback, so the service degrades to rules-only explanations and a scripted agent instead of failing.
 
 ## Voice step-up, in the reviewer's language
 
@@ -58,7 +58,7 @@ Speech comes from [Sarvam](https://www.sarvam.ai) (Bulbul text-to-speech, Saaras
 
 ```bash
 npm install
-npm test                      # 19 tests, in-memory store, no network
+npm test                      # 22 tests, in-memory store, no network
 npm start                     # http://localhost:8080, in-memory store, rules-only explanations
 ```
 
