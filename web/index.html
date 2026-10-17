@@ -3,88 +3,152 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#14181e" media="(prefers-color-scheme: dark)">
 <title>Agent Checkout Guard</title>
+<meta name="description" content="A risk decision at the moment an AI agent completes a checkout over UCP: approve, step up to a human, or decline, with a Gemini-written reason.">
 <link rel="stylesheet" href="style.css">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%231f4fd8%27/%3E%3Cpath d=%27M9 16l5 5 9-10%27 stroke=%27%23fff%27 stroke-width=%273.5%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%231d4ed8%27/%3E%3Cpath d=%27M16 6l8 3v6c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V9z%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%272.2%27 stroke-linejoin=%27round%27/%3E%3Cpath d=%27M12.5 15.5l2.5 2.5 4.5-5%27 fill=%27none%27 stroke=%27%23fff%27 stroke-width=%272.2%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+<script>
+  // Apply a saved theme before first paint so the page never flashes.
+  try { const t = localStorage.getItem('acg-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+</script>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l7.5 2.8v5.7c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V5.8z"/><path d="M8.8 12.2l2.3 2.3 4.2-4.7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4.5"/><path d="M12 17.6v.1"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4.5" y="8" width="15" height="11" rx="3"/><path d="M12 4.5V8M9.5 13v.1M14.5 13v.1"/></symbol>
+  <symbol id="i-store" viewBox="0 0 24 24"><path d="M4 9l1.5-4.5h13L20 9"/><path d="M4 9h16v1.5a2.7 2.7 0 0 1-5.3 0 2.7 2.7 0 0 1-5.4 0 2.7 2.7 0 0 1-5.3 0z"/><path d="M5.5 13v6.5h13V13"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3.5l1.9 5.6 5.6 1.9-5.6 1.9L12 18.5l-1.9-5.6-5.6-1.9 5.6-1.9z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></symbol>
+</svg>
+
+<a class="skip" href="#run">Skip to the live run</a>
+
 <header class="top">
-  <div class="brand">
-    <span class="mark" aria-hidden="true"></span>
-    <div>
-      <h1>Agent Checkout Guard</h1>
-      <p class="sub">Trusted agent checkout over UCP. Every Complete Checkout is checked before money moves.</p>
+  <div class="top-inner">
+    <div class="brand">
+      <svg class="mark" aria-hidden="true"><use href="#i-shield"/></svg>
+      <div class="brand-text">
+        <h1 translate="no">Agent Checkout Guard</h1>
+        <p class="sub">Risk decisions for purchases made by AI agents, at the moment they complete checkout over UCP.</p>
+      </div>
+    </div>
+    <div class="top-tools">
+      <ul class="status" id="status" aria-label="System status"><li class="pill">Connecting…</li></ul>
+      <button class="icon-btn" id="theme" type="button" aria-label="Switch to dark theme" title="Switch theme">
+        <svg aria-hidden="true"><use href="#i-moon"/></svg>
+      </button>
     </div>
   </div>
-  <div class="status" id="status">connecting…</div>
 </header>
 
-<main class="grid">
-  <section class="panel scenarios">
-    <div class="panel-head">
-      <h2>Buyer agent</h2>
-      <label class="mode"><span>Mode</span>
-        <select id="mode">
-          <option value="auto">auto</option>
-          <option value="gemini">Gemini</option>
-          <option value="scripted">scripted</option>
-        </select>
-      </label>
-    </div>
-    <p class="hint">Pick what the human asked the agent to do. The agent shops over UCP; the Guard decides at checkout.</p>
-    <div id="scenarios" class="scenario-list"></div>
+<main class="page">
+  <section class="intro" aria-label="How it works">
+    <ol class="flow">
+      <li><svg aria-hidden="true"><use href="#i-bot"/></svg><span><b>A buyer agent shops</b> over UCP: discovers the seller, reads machine-readable prices, builds a cart.</span></li>
+      <li><svg aria-hidden="true"><use href="#i-shield"/></svg><span><b>The Guard checks Complete Checkout</b> against the quote, the human's request, spend, velocity and duplicates.</span></li>
+      <li><svg aria-hidden="true"><use href="#i-spark"/></svg><span><b>One of three outcomes</b>, each explained by Gemini:
+        <span class="chip approve sm"><svg aria-hidden="true"><use href="#i-check"/></svg>Approve</span>
+        <span class="chip step_up sm"><svg aria-hidden="true"><use href="#i-alert"/></svg>Step-up</span>
+        <span class="chip decline sm"><svg aria-hidden="true"><use href="#i-x"/></svg>Decline</span></span></li>
+    </ol>
   </section>
 
-  <section class="panel trace">
-    <div class="panel-head">
-      <h2>Run trace</h2>
-      <span id="run-meta" class="meta"></span>
-    </div>
-    <ol id="trace" class="trace-list"><li class="empty">No run yet. Start a scenario on the left.</li></ol>
+  <section class="metrics" id="metrics" aria-label="Guard summary">
+    <div class="metric-list" id="metric-list"></div>
+    <div class="mix" id="mix" role="img" aria-label="Outcome mix"></div>
   </section>
 
-  <section class="tiles" id="tiles" aria-label="Guard summary"></section>
+  <div class="workbench">
+    <section class="panel scenarios" aria-labelledby="scen-h">
+      <div class="panel-head">
+        <h2 id="scen-h">Run a scenario</h2>
+      </div>
+      <fieldset class="seg" id="mode">
+        <legend class="sr-only">Buyer agent mode</legend>
+        <label title="Gemini when configured, otherwise scripted"><input type="radio" name="mode" value="auto" checked><span>Auto</span></label>
+        <label title="Gemini plans the purchase with function calling"><input type="radio" name="mode" value="gemini"><span>Gemini agent</span></label>
+        <label title="Deterministic plan, same every time"><input type="radio" name="mode" value="scripted"><span>Scripted</span></label>
+      </fieldset>
+      <p class="hint">Each card is what a human asked the agent to do. The agent buys over UCP and the Guard decides at checkout.</p>
+      <div id="scenarios" class="scenario-list"></div>
+    </section>
 
-  <section class="panel decisions">
+    <section class="panel run" id="run" aria-labelledby="run-h" tabindex="-1">
+      <div class="panel-head">
+        <h2 id="run-h">Live run</h2>
+        <span id="run-meta" class="run-meta"></span>
+      </div>
+      <div id="run-body" class="run-body"></div>
+      <p id="run-announce" class="sr-only" aria-live="polite"></p>
+    </section>
+  </div>
+
+  <section class="panel queue" id="queue" aria-labelledby="queue-h">
     <div class="panel-head">
-      <h2>Guard decisions</h2>
-      <span class="meta">newest first, live from Firestore</span>
+      <h2 id="queue-h">Needs a human <span class="count" id="queue-count" hidden></span></h2>
+      <span class="meta">Step-ups wait here as UCP <code>requires_escalation</code> until someone decides</span>
+    </div>
+    <div id="queue-list" class="queue-list"></div>
+  </section>
+
+  <section class="panel decisions" aria-labelledby="dec-h">
+    <div class="panel-head">
+      <h2 id="dec-h">Decision log</h2>
+      <span class="meta" id="dec-meta">Newest first</span>
     </div>
     <div class="table-wrap">
       <table id="decisions">
         <thead>
-          <tr><th>Time</th><th>Agent</th><th>Seller</th><th>Cart</th><th class="num">Total</th><th class="num">Risk</th><th>Outcome</th><th>Why</th><th>Review</th></tr>
+          <tr><th scope="col">When</th><th scope="col">Agent</th><th scope="col">Seller and cart</th><th scope="col" class="num">Total</th><th scope="col">Risk</th><th scope="col">Outcome</th><th scope="col">Why</th></tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
   </section>
 
-  <section class="panel sellers">
-    <div class="panel-head"><h2>Sellers (illustrative)</h2></div>
-    <div id="sellers" class="seller-list"></div>
-  </section>
+  <div class="lower">
+    <section class="panel sellers" aria-labelledby="sell-h">
+      <div class="panel-head">
+        <h2 id="sell-h">Sellers</h2>
+        <span class="meta">Illustrative, not real companies</span>
+      </div>
+      <div id="sellers" class="seller-list"></div>
+    </section>
 
-  <section class="panel policy">
-    <div class="panel-head">
-      <h2>Agent policy</h2>
-      <select id="policy-agent"></select>
-    </div>
-    <form id="policy-form" class="policy-form">
-      <label>Per-transaction cap ($)<input name="per_transaction_cap" type="number" min="0" step="1"></label>
-      <label>Daily cap ($)<input name="daily_cap" type="number" min="0" step="1"></label>
-      <label>Max quantity per line<input name="max_quantity_per_line" type="number" min="1" step="1"></label>
-      <label>Step-up at risk score<input name="step_up_threshold" type="number" min="1" max="100" step="1"></label>
-      <label class="check"><input name="require_verified_seller" type="checkbox"> Require verified seller</label>
-      <button type="submit">Save policy</button>
-      <span id="policy-saved" class="meta"></span>
-    </form>
-  </section>
+    <section class="panel policy" aria-labelledby="pol-h">
+      <div class="panel-head">
+        <h2 id="pol-h">Agent spend policy</h2>
+        <label class="sr-only" for="policy-agent">Agent</label>
+        <select id="policy-agent"></select>
+      </div>
+      <p class="hint">Changes apply to the next checkout this agent completes.</p>
+      <form id="policy-form" class="policy-form">
+        <label>Per-transaction cap<span class="money"><span aria-hidden="true">$</span><input name="per_transaction_cap" type="number" autocomplete="off" min="0" step="1" inputmode="numeric"></span></label>
+        <label>Daily cap<span class="money"><span aria-hidden="true">$</span><input name="daily_cap" type="number" autocomplete="off" min="0" step="1" inputmode="numeric"></span></label>
+        <label>Max quantity per line<input name="max_quantity_per_line" type="number" autocomplete="off" min="1" step="1" inputmode="numeric"></label>
+        <label>Step-up at risk score<input name="step_up_threshold" type="number" autocomplete="off" min="1" max="100" step="1" inputmode="numeric"></label>
+        <label class="check"><input name="require_verified_seller" type="checkbox"> Only buy from verified sellers</label>
+        <div class="form-foot">
+          <button type="submit" class="btn primary" id="policy-save">Save policy</button>
+          <span id="policy-saved" class="meta" role="status"></span>
+        </div>
+      </form>
+    </section>
+  </div>
 </main>
 
 <footer class="foot">
-  <span>Demo for the AI Builder Cup. Sellers, prices and agents are made up. No real payments.</span>
-  <button id="reset" class="link">Reset demo data</button>
+  <span>Demo for the Google Cloud AI Builder Cup. Sellers, prices and agents are made up. No real payments.</span>
+  <button id="reset" class="link" type="button">Reset demo data</button>
 </footer>
 <script src="app.js" type="module"></script>
 </body>
