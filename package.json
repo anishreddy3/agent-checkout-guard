@@ -1,0 +1,22 @@
+{
+  "name": "agent-checkout-guard",
+  "version": "0.1.0",
+  "description": "Trusted agent checkout: UCP sellers, a Gemini buyer agent, and a BFSI risk guard that runs on every Complete Checkout.",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node --test test/*.test.js",
+    "bench": "node scripts/bench.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@google/genai": "^1.9.0",
+    "express": "^4.21.2"
+  },
+  "license": "Apache-2.0"
+}

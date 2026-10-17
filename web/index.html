@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Checkout Guard</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%231f4fd8%27/%3E%3Cpath d=%27M9 16l5 5 9-10%27 stroke=%27%23fff%27 stroke-width=%273.5%27 fill=%27none%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <h1>Agent Checkout Guard</h1>
+      <p class="sub">Trusted agent checkout over UCP. Every Complete Checkout is checked before money moves.</p>
+    </div>
+  </div>
+  <div class="status" id="status">connecting…</div>
+</header>
+
+<main class="grid">
+  <section class="panel scenarios">
+    <div class="panel-head">
+      <h2>Buyer agent</h2>
+      <label class="mode"><span>Mode</span>
+        <select id="mode">
+          <option value="auto">auto</option>
+          <option value="gemini">Gemini</option>
+          <option value="scripted">scripted</option>
+        </select>
+      </label>
+    </div>
+    <p class="hint">Pick what the human asked the agent to do. The agent shops over UCP; the Guard decides at checkout.</p>
+    <div id="scenarios" class="scenario-list"></div>
+  </section>
+
+  <section class="panel trace">
+    <div class="panel-head">
+      <h2>Run trace</h2>
+      <span id="run-meta" class="meta"></span>
+    </div>
+    <ol id="trace" class="trace-list"><li class="empty">No run yet. Start a scenario on the left.</li></ol>
+  </section>
+
+  <section class="tiles" id="tiles" aria-label="Guard summary"></section>
+
+  <section class="panel decisions">
+    <div class="panel-head">
+      <h2>Guard decisions</h2>
+      <span class="meta">newest first, live from Firestore</span>
+    </div>
+    <div class="table-wrap">
+      <table id="decisions">
+        <thead>
+          <tr><th>Time</th><th>Agent</th><th>Seller</th><th>Cart</th><th class="num">Total</th><th class="num">Risk</th><th>Outcome</th><th>Why</th><th>Review</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel sellers">
+    <div class="panel-head"><h2>Sellers (illustrative)</h2></div>
+    <div id="sellers" class="seller-list"></div>
+  </section>
+
+  <section class="panel policy">
+    <div class="panel-head">
+      <h2>Agent policy</h2>
+      <select id="policy-agent"></select>
+    </div>
+    <form id="policy-form" class="policy-form">
+      <label>Per-transaction cap ($)<input name="per_transaction_cap" type="number" min="0" step="1"></label>
+      <label>Daily cap ($)<input name="daily_cap" type="number" min="0" step="1"></label>
+      <label>Max quantity per line<input name="max_quantity_per_line" type="number" min="1" step="1"></label>
+      <label>Step-up at risk score<input name="step_up_threshold" type="number" min="1" max="100" step="1"></label>
+      <label class="check"><input name="require_verified_seller" type="checkbox"> Require verified seller</label>
+      <button type="submit">Save policy</button>
+      <span id="policy-saved" class="meta"></span>
+    </form>
+  </section>
+</main>
+
+<footer class="foot">
+  <span>Demo for the AI Builder Cup. Sellers, prices and agents are made up. No real payments.</span>
+  <button id="reset" class="link">Reset demo data</button>
+</footer>
+<script src="app.js" type="module"></script>
+</body>
+</html>

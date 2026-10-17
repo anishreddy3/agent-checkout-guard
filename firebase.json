@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "web",
+    "ignore": ["firebase.json", "**/.*"],
+    "rewrites": [
+      { "source": "/api/**", "run": { "serviceId": "agent-checkout-guard", "region": "asia-south1" } },
+      { "source": "/sellers/**", "run": { "serviceId": "agent-checkout-guard", "region": "asia-south1" } },
+      { "source": "/review/**", "run": { "serviceId": "agent-checkout-guard", "region": "asia-south1" } },
+      { "source": "/healthz", "run": { "serviceId": "agent-checkout-guard", "region": "asia-south1" } }
+    ],
+    "headers": [
+      { "source": "**/*.@(js|css)", "headers": [{ "key": "Cache-Control", "value": "public, max-age=300" }] }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  }
+}
