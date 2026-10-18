@@ -35,6 +35,7 @@ server/
   ap2/mandates.js    AP2 Checkout and Payment Mandates: issue, close, verify, constraints, receipts
   ap2/keys.js        Seller and platform signing keys (Secret Manager in production)
   voice.js           Voice step-up: prompts, speech (Sarvam or Google), spoken-amount check
+  workspace.js       Per-browser workspaces: each visitor's runs, decisions, policies and risk history are isolated
 web/                 Dashboard: vanilla JS, served by Firebase Hosting
 test/                Unit tests for the rules and an HTTP end-to-end test of every scenario
 scripts/deploy.sh    Cloud Run + Firestore + Firebase Hosting deploy
@@ -87,7 +88,7 @@ Speech comes from [Sarvam](https://www.sarvam.ai) (Bulbul text-to-speech, Saaras
 
 ```bash
 npm install
-npm test                      # 37 tests, in-memory store, no network
+npm test                      # 42 tests, in-memory store, no network
 npm start                     # http://localhost:8080, in-memory store, rules-only explanations
 ```
 

@@ -48,6 +48,9 @@ class MemoryStore {
   async clear() {
     for (const c of COLLECTIONS) this.data[c].clear();
   }
+  async deleteWhere(col, field, value) {
+    for (const [id, row] of this.data[col]) if (row[field] === value) this.data[col].delete(id);
+  }
 }
 
 class FirestoreStore {
@@ -101,6 +104,16 @@ class FirestoreStore {
         return rows.slice(0, limit);
       }
       throw err;
+    }
+  }
+  async deleteWhere(col, field, value) {
+    await this.ready;
+    for (let i = 0; i < 20; i++) {
+      const snap = await this.db.collection(col).where(field, '==', value).limit(400).get();
+      if (snap.empty) return;
+      const batch = this.db.batch();
+      snap.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
     }
   }
   async clear() {

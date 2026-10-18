@@ -3,6 +3,7 @@
 // agent has no stored policy. Amounts are minor units (cents).
 
 import { getStore } from '../store/index.js';
+import { workspaceOfProfile } from '../workspace.js';
 
 export const DEFAULT_POLICY = {
   per_transaction_cap: 100000, // $1,000
@@ -34,5 +35,5 @@ export async function policyFor(profile) {
 
 export async function savePolicy(profile, policy, display_name) {
   const id = agentIdFromProfile(profile);
-  return getStore().set('agents', id, { profile, display_name: display_name ?? profile, policy });
+  return getStore().set('agents', id, { profile, workspace: workspaceOfProfile(profile), display_name: display_name ?? profile, policy });
 }

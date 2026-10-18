@@ -2,6 +2,26 @@
 // API_BASE is empty when served by the same origin (Cloud Run or Firebase
 // Hosting rewrites). Set window.API_BASE to point elsewhere.
 const API = window.API_BASE || '';
+// Per-browser workspace: runs, decisions, policies and the risk history you
+// create are yours alone. ?ws=<id> opens the same workspace on another device.
+const WS = (() => {
+  const ok = (v) => /^[a-z0-9-]{8,48}$/.test(v ?? '');
+  const fromUrl = new URLSearchParams(location.search).get('ws');
+  try {
+    if (ok(fromUrl)) {
+      localStorage.setItem('acg-ws', fromUrl);
+      return fromUrl;
+    }
+    const saved = localStorage.getItem('acg-ws');
+    if (ok(saved)) return saved;
+    const fresh = crypto.randomUUID();
+    localStorage.setItem('acg-ws', fresh);
+    return fresh;
+  } catch {
+    return ok(fromUrl) ? fromUrl : crypto.randomUUID();
+  }
+})();
+const wsProfile = (base) => `${base}?ws=${WS}`;
 const $ = (s) => document.querySelector(s);
 const fmt = (minor, cur = 'USD') =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).format((minor || 0) / 100);
@@ -50,7 +70,7 @@ const findingChip = (f) => {
   const title = typeof f === 'string' ? code : `${code}: ${f.detail}`;
   return `<span class="finding ${esc(sev)}" title="${esc(title)}"><i></i>${esc(FINDING[code] ?? code)}</span>`;
 };
-const agentShort = (profile) => String(profile || '').split('/').pop();
+const agentShort = (profile) => String(profile || '').split('?')[0].split('/').pop();
 const sellerShort = (name) => String(name || '');
 const reviewLabel = (rv) => {
   const verb = rv.action === 'approve' ? 'Approved' : 'Rejected';
@@ -71,7 +91,7 @@ const voiceButton = (id) =>
   voiceReady() ? `<button type="button" class="btn voice-btn" data-voice="${esc(id)}">${icon('mic')}Confirm by voice</button>` : '';
 
 async function api(path, opts) {
-  const r = await fetch(API + path, { headers: { 'content-type': 'application/json' }, ...opts });
+  const r = await fetch(API + path, { headers: { 'content-type': 'application/json', 'x-acg-workspace': WS }, ...opts });
   if (!r.ok) throw new Error(`${path} returned ${r.status}`);
   return r.json();
 }
@@ -108,7 +128,7 @@ async function loadStatus() {
     const g = status.gemini.configured
       ? `<li class="pill"><span class="dot on"></span><span><b>Gemini</b>${status.gemini.vertex ? ' on Vertex AI' : ''}</span></li>`
       : `<li class="pill"><span class="dot off"></span><span>Gemini <b>off</b>, rules-only explanations</span></li>`;
-    $('#status').innerHTML = `${g}<li class="pill"><span>Store <b>${status.store === 'firestore' ? 'Firestore' : 'in-memory'}</b></span></li><li class="pill"><span>UCP <b>${esc(status.ucp_version)}</b></span></li>`;
+    $('#status').innerHTML = `${g}<li class="pill"><span>Store <b>${status.store === 'firestore' ? 'Firestore' : 'in-memory'}</b></span></li><li class="pill"><span>UCP <b>${esc(status.ucp_version)}</b></span></li><li class="pill" title="Your runs and decisions are visible only in this browser. Workspace ${esc(WS.slice(0, 8))}"><span>Workspace <b>private</b></span></li>`;
     $('#dec-meta').textContent = `Newest first, ${status.store === 'firestore' ? 'live from Firestore' : 'in-memory store'}`;
   } catch {
     $('#status').innerHTML = '<li class="pill"><span class="dot off"></span><span>API unreachable, retrying</span></li>';
@@ -397,7 +417,7 @@ async function voiceRecord() {
   if (!voice || !wav) return;
   row.innerHTML = `<div class="working"><i></i>${engineName(code) === 'Sarvam' ? 'Sarvam transcribes, Gemini reads the answer…' : 'Gemini is listening to the answer…'}</div>`;
   try {
-    const r = await fetch(`${API}/api/decisions/${voice.id}/voice/answer?language=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'content-type': 'audio/wav' }, body: wav });
+    const r = await fetch(`${API}/api/decisions/${voice.id}/voice/answer?language=${encodeURIComponent(code)}`, { method: 'POST', headers: { 'content-type': 'audio/wav', 'x-acg-workspace': WS }, body: wav });
     const out = await r.json();
     if (!r.ok) throw new Error(out?.error?.message ?? `status ${r.status}`);
     const amount = out.spoken_amount == null ? 'no amount' : fmt(Math.round(out.spoken_amount * 100));
@@ -574,7 +594,7 @@ function renderSellers(sessions) {
 const AGENTS = ['https://platform.example/agents/procurement-bot', 'https://platform.example/agents/marketing-ops-bot'];
 async function loadPolicy() {
   const profile = $('#policy-agent').value;
-  const p = await api(`/api/policy?profile=${encodeURIComponent(profile)}`);
+  const p = await api(`/api/policy?profile=${encodeURIComponent(wsProfile(profile))}`);
   const f = $('#policy-form');
   f.per_transaction_cap.value = p.per_transaction_cap / 100;
   f.daily_cap.value = p.daily_cap / 100;
@@ -596,7 +616,7 @@ $('#policy-form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   btn.textContent = 'Saving…';
   try {
-    await api('/api/policy', { method: 'POST', body: JSON.stringify({ profile: $('#policy-agent').value, policy }) });
+    await api('/api/policy', { method: 'POST', body: JSON.stringify({ profile: wsProfile($('#policy-agent').value), policy }) });
     $('#policy-saved').textContent = `Saved for ${agentShort($('#policy-agent').value)}`;
   } catch (err) {
     $('#policy-saved').textContent = `Not saved: ${err.message}`;
@@ -631,7 +651,7 @@ async function refresh() {
 }
 
 $('#reset').addEventListener('click', async () => {
-  if (!confirm('Clear all sessions, decisions and runs from this simulation?')) return;
+  if (!confirm('Clear all sessions, decisions and runs from your workspace?')) return;
   await api('/api/reset', { method: 'POST', body: '{}' });
   currentRun = null;
   rendered = { id: null, count: 0 };

@@ -20,6 +20,7 @@ import { SCENARIOS } from './agent/scenarios.js';
 import { geminiStatus } from './gemini.js';
 import { voiceStatus, speak, writePrompt, hear, voiceOutcome, VOICE_LANGUAGES } from './voice.js';
 import { keySource, publicKeys } from './ap2/keys.js';
+import { workspaceFrom } from './workspace.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const WEB_DIR = path.join(__dirname, '..', 'web');
@@ -30,11 +31,13 @@ export function createApp() {
   app.use(express.json({ limit: '256kb' }));
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Headers', 'content-type, ucp-agent, request-id, idempotency-key, request-signature, x-admin-token');
+    res.setHeader('Access-Control-Allow-Headers', 'content-type, ucp-agent, request-id, idempotency-key, request-signature, x-admin-token, x-acg-workspace');
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,OPTIONS');
     if (req.method === 'OPTIONS') return res.sendStatus(204);
+    req.ws = workspaceFrom(req);
     next();
   });
+  const inWs = (req) => [['workspace', '==', req.ws]];
 
   const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
@@ -107,11 +110,11 @@ export function createApp() {
   );
   app.post('/api/runs', wrap(async (req, res) => {
     const origin = process.env.SELF_ORIGIN || baseUrl(req);
-    const run = await startRun({ scenarioId: req.body?.scenario_id, origin, mode: req.body?.mode });
+    const run = await startRun({ scenarioId: req.body?.scenario_id, origin, mode: req.body?.mode, workspace: req.ws });
     res.status(202).json(run);
   }));
   app.get('/api/runs', wrap(async (req, res) => {
-    res.json(await getStore().query('runs', [], { orderBy: 'started_at', limit: 50 }));
+    res.json(await getStore().query('runs', inWs(req), { orderBy: 'started_at', limit: 50 }));
   }));
   app.get('/api/runs/:id', wrap(async (req, res) => {
     const run = await getStore().get('runs', req.params.id);
@@ -121,7 +124,7 @@ export function createApp() {
 
   // ---- guard data for the dashboard ---------------------------------------
   app.get('/api/decisions', wrap(async (req, res) => {
-    res.json(await getStore().query('decisions', [], { orderBy: 'at', limit: Number(req.query.limit) || 100 }));
+    res.json(await getStore().query('decisions', inWs(req), { orderBy: 'at', limit: Number(req.query.limit) || 100 }));
   }));
   app.get('/api/decisions/:id', wrap(async (req, res) => {
     const d = await getStore().get('decisions', req.params.id);
@@ -171,16 +174,16 @@ export function createApp() {
       const outcome = voiceOutcome(answer, d.total);
       const evidence = { channel: 'voice', language, transcript: answer.transcript, spoken_amount: answer.spoken_amount, heard_by: answer.heard_by };
       const review = outcome.action ? await resolveReview(d.id, outcome.action, `voice:${language}`, evidence) : null;
-      await getStore().add('events', { type: 'review.voice_attempt', at: new Date().toISOString(), decision_id: d.id, checkout_id: d.checkout_id, agent_profile: d.agent_profile, ...evidence, decision: answer.decision, action: outcome.action });
+      await getStore().add('events', { type: 'review.voice_attempt', at: new Date().toISOString(), decision_id: d.id, checkout_id: d.checkout_id, agent_profile: d.agent_profile, workspace: d.workspace, ...evidence, decision: answer.decision, action: outcome.action });
       res.json({ ...answer, action: outcome.action, reason: outcome.reason, review: review?.review ?? null });
     })
   );
 
   app.get('/api/events', wrap(async (req, res) => {
-    res.json(await getStore().query('events', [], { orderBy: 'at', limit: Number(req.query.limit) || 200 }));
+    res.json(await getStore().query('events', inWs(req), { orderBy: 'at', limit: Number(req.query.limit) || 200 }));
   }));
   app.get('/api/sessions', wrap(async (req, res) => {
-    const rows = await getStore().query('sessions', [], { orderBy: 'updated_at', limit: Number(req.query.limit) || 100 });
+    const rows = await getStore().query('sessions', inWs(req), { orderBy: 'updated_at', limit: Number(req.query.limit) || 100 });
     res.json(rows);
   }));
   app.get('/api/policy', wrap(async (req, res) => {
@@ -195,8 +198,9 @@ export function createApp() {
   app.post('/api/reset', wrap(async (req, res) => {
     const token = process.env.ADMIN_TOKEN;
     if (token && req.headers['x-admin-token'] !== token) return res.status(403).json({ error: { code: 'forbidden' } });
-    await getStore().clear();
-    res.json({ ok: true });
+    // Clears only the caller's workspace.
+    for (const col of ['sessions', 'decisions', 'events', 'runs', 'agents']) await getStore().deleteWhere(col, 'workspace', req.ws);
+    res.json({ ok: true, workspace: req.ws });
   }));
 
   // ---- dashboard (also served by Firebase Hosting in production) -----------

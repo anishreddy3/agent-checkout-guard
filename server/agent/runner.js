@@ -25,6 +25,7 @@ import { SELLERS, getItem, unitPriceFor } from '../sellers/catalog.js';
 import { approveOpenMandates, closeMandates, checkoutJwtFrom, verifyMerchantAuthorization, merchantOf, newAgentKey } from '../ap2/mandates.js';
 import { platformKey } from '../ap2/keys.js';
 import { generateKey, b64uJson } from '../ap2/jose.js';
+import { profileFor, PUBLIC_WS } from '../workspace.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -366,7 +367,7 @@ async function runGemini({ scenario, client, trace, intent, onModel, ap2 }) {
 
 // ---- entry point -----------------------------------------------------------
 
-export async function startRun({ scenarioId, origin, mode }) {
+export async function startRun({ scenarioId, origin, mode, workspace = PUBLIC_WS }) {
   const scenario = getScenario(scenarioId);
   if (!scenario) throw new Error(`Unknown scenario ${scenarioId}`);
   const useGemini = mode === 'gemini' || (mode !== 'scripted' && geminiStatus().configured);
@@ -375,7 +376,8 @@ export async function startRun({ scenarioId, origin, mode }) {
     scenario_id: scenario.id,
     title: scenario.title,
     request: scenario.request,
-    agent_profile: scenario.agent_profile,
+    agent_profile: profileFor(scenario.agent_profile, workspace),
+    workspace,
     expected_outcome: scenario.expected_outcome,
     mode: useGemini ? 'gemini' : 'scripted',
     model: useGemini ? GEMINI_MODEL : null,
@@ -390,7 +392,7 @@ export async function startRun({ scenarioId, origin, mode }) {
   // Run in the background; the dashboard polls /api/runs/:id.
   (async () => {
     try {
-      const client = new UcpClient({ origin, agentProfile: scenario.agent_profile });
+      const client = new UcpClient({ origin, agentProfile: run.agent_profile });
       const intent = await extractIntent(scenario.request, scenario);
       const ap2 = { agentKey: newAgentKey(run.id), forged: scenario.ap2 === 'forged' };
       await trace.push({ kind: 'intent', text: 'User intent extracted for the Guard', result: intent });

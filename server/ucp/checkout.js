@@ -22,6 +22,7 @@ import { evaluate } from '../guard/index.js';
 import { merchantOf, signCheckout, verifyAtComplete, checkoutReceipt } from '../ap2/mandates.js';
 import { sellerKey, platformKeyById, trustedPlatformFor } from '../ap2/keys.js';
 import { publicJwk, sha256b64u } from '../ap2/jose.js';
+import { workspaceOfProfile } from '../workspace.js';
 
 export const UCP_VERSION = '2026-01-11';
 const SESSION_TTL_MS = 6 * 60 * 60 * 1000;
@@ -161,7 +162,7 @@ function links(origin, seller) {
 
 function publicView(session) {
   // Strip internal fields before returning to the platform.
-  const { seller_id, agent_profile, quote_history, guard, ap2_state, ...rest } = session;
+  const { seller_id, agent_profile, quote_history, guard, ap2_state, workspace, ...rest } = session;
   return rest;
 }
 
@@ -177,6 +178,7 @@ async function logEvent(type, session, extra = {}) {
     at: new Date().toISOString(),
     seller_id: session.seller_id,
     agent_profile: session.agent_profile,
+    workspace: session.workspace ?? workspaceOfProfile(session.agent_profile),
     checkout_id: session.id,
     status: session.status,
     total: totalOf(session),
@@ -201,6 +203,7 @@ export async function createCheckout(req, sellerId, body) {
     ucp: { version: UCP_VERSION },
     id: `chk_${randomUUID().slice(0, 12)}`,
     seller_id: seller.id,
+    workspace: workspaceOfProfile(agent),
     merchant: merchantOf(seller),
     agent_profile: agent,
     line_items,
@@ -383,7 +386,7 @@ export async function completeCheckout(req, sellerId, id, body) {
       error_description: completedNow ? undefined : decision.explanation,
     });
     if (completedNow && ap2.open_checkout_hash) {
-      await getStore().add('events', { type: 'ap2.mandate_used', at: new Date().toISOString(), open_checkout_hash: ap2.open_checkout_hash, checkout_id: id, agent_profile: s.agent_profile });
+      await getStore().add('events', { type: 'ap2.mandate_used', at: new Date().toISOString(), open_checkout_hash: ap2.open_checkout_hash, checkout_id: id, agent_profile: s.agent_profile, workspace: s.workspace });
     }
   }
   await getStore().set('sessions', id, next);

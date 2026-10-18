@@ -12,6 +12,7 @@
 
 import { generateKey, publicJwk } from './jose.js';
 import { SELLERS } from '../sellers/catalog.js';
+import { baseProfile } from '../workspace.js';
 
 let keys = null;
 
@@ -45,7 +46,7 @@ const TRUSTED_PLATFORM_PROFILES = new Set([
 ]);
 
 export function trustedPlatformFor(profile) {
-  return TRUSTED_PLATFORM_PROFILES.has(profile) ? { profile, signing_keys: [publicJwk(platformKey())] } : null;
+  return TRUSTED_PLATFORM_PROFILES.has(baseProfile(profile)) ? { profile, signing_keys: [publicJwk(platformKey())] } : null;
 }
 
 export function platformKeyById(kid) {
