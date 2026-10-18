@@ -232,6 +232,8 @@ function stepHtml(st, i, lastGuard) {
 }
 
 function renderRun(run) {
+  // Never wipe a voice review that is open inside the run's verdict card.
+  if (voice && $('#run-body').contains(voice.slot)) return;
   const firstPaint = rendered.id !== run.id;
   const prev = firstPaint ? 0 : rendered.count;
   const meta = [`<span class="chip neutral sm">${run.mode === 'gemini' ? 'Gemini agent' : 'Scripted agent'}</span>`];
@@ -314,7 +316,9 @@ function voiceLang() {
 
 function onVoiceClick(e) {
   const open = e.target.closest('[data-voice]');
-  if (open) return openVoice(open.dataset.voice);
+  // Open the panel next to the button that was clicked: the same step-up can
+  // show in both the run verdict and the review queue.
+  if (open) return openVoice(open.dataset.voice, open.closest('.qitem, .verdict'));
   const act = e.target.closest('[data-vact]');
   if (!act || !voice) return;
   if (act.dataset.vact === 'prompt') return voicePrompt();
@@ -323,9 +327,9 @@ function onVoiceClick(e) {
   if (act.dataset.vact === 'close') return closeVoice();
 }
 
-function openVoice(id) {
+function openVoice(id, scope) {
   closeVoice();
-  const slot = document.querySelector(`.voice-slot[data-slot="${CSS.escape(id)}"]`);
+  const slot = (scope ?? document).querySelector(`.voice-slot[data-slot="${CSS.escape(id)}"]`);
   if (!slot) return;
   voice = { id, slot, rec: null };
   const langs = status.voice.languages;
