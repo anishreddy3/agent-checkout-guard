@@ -14,7 +14,7 @@ Agent Checkout Guard puts a risk decision at the one point every agent purchase 
 
 Gemini writes the explanation for every decision and powers the buyer agent in the demo.
 
-Built for the Google Cloud AI Builder Cup 2026 (BFSI and Retail tracks). The sellers, catalogs, prices and agents are illustrative simulations of a real agent-commerce workflow. Payments use a test payment handler, so no money moves.
+Built for the Google Cloud AI Builder Cup 2026 (BFSI track). The sellers, catalogs, prices and agents are illustrative simulations of a real agent-commerce workflow. Payments use a test payment handler, so no money moves.
 
 ## What is in the box
 

@@ -122,7 +122,7 @@ async function loadScenarios() {
     .map(
       (s) => `
       <button type="button" class="scenario" data-run="${esc(s.id)}">
-        <span class="row"><span class="title">${esc(s.title)}</span><span class="tag">${esc(s.track)}</span></span>
+        <span class="row"><span class="title">${esc(s.title)}</span><span class="tag">${esc(s.category)}</span></span>
         <span class="req">“${esc(s.request)}”</span>
         <span class="foot-row"><span>Expected ${chip(s.expected_outcome, 'sm')} · ${s.purchases} purchase${s.purchases > 1 ? 's' : ''}</span><span class="go">${icon('play')}Run</span></span>
       </button>`
