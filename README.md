@@ -43,6 +43,15 @@ scripts/bench.js     Benchmark: outcome accuracy and guard latency
 docs/                Architecture and flow diagrams
 ```
 
+## Testing
+
+```bash
+npm ci
+npm test
+```
+
+The suite covers Guard rules, AP2 mandate verification, Gemini fallbacks, voice step-up helpers, workspace isolation, and an HTTP end-to-end run of every demo scenario (42 tests).
+
 ## How Google Cloud is used
 
 **Cloud Run** runs the whole backend as one container: the three illustrative sellers' UCP endpoints (`/.well-known/ucp`, `/checkout-sessions`), the Guard, and the buyer agent runner. Source-based deploy, min one instance so the evaluation link stays warm.
